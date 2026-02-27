@@ -129,7 +129,9 @@ func (a *Applier) applyUpdate(ctx context.Context, tx pgx.Tx, m *stream.ChangeMe
 		strings.Join(setClauses, ", "),
 		strings.Join(whereClauses, " AND "))
 
-	allVals := append(setVals, whereVals...)
+	allVals := make([]any, 0, len(setVals)+len(whereVals))
+	allVals = append(allVals, setVals...)
+	allVals = append(allVals, whereVals...)
 	_, err := tx.Exec(ctx, query, allVals...)
 	return err
 }
@@ -163,7 +165,7 @@ func (a *Applier) buildSetClauses(tuple *stream.TupleData) (clauses []string, va
 	return
 }
 
-func (a *Applier) buildWhereClauses(m *stream.ChangeMessage, rel *stream.RelationMessage, offset int) (clauses []string, vals []any) {
+func (a *Applier) buildWhereClauses(m *stream.ChangeMessage, _ *stream.RelationMessage, offset int) (clauses []string, vals []any) {
 	// Prefer OldTuple (replica identity) for WHERE; fall back to NewTuple.
 	source := m.OldTuple
 	if source == nil {

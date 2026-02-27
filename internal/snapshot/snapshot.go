@@ -3,6 +3,7 @@ package snapshot
 import (
 	"context"
 	"fmt"
+	"strings"
 	"sync"
 
 	"github.com/jackc/pgx/v5"
@@ -132,7 +133,7 @@ func (c *Copier) copyTable(ctx context.Context, table TableInfo, snapshotName st
 	}
 
 	// Read all rows from source.
-	qn := table.QualifiedName()
+	qn := quoteQualifiedName(table.Schema, table.Name)
 	rows, err := srcTx.Query(ctx, fmt.Sprintf("SELECT * FROM %s", qn))
 	if err != nil {
 		return CopyResult{Table: table, Err: fmt.Errorf("select from %s: %w", qn, err)}
@@ -170,4 +171,15 @@ func (c *Copier) copyTable(ctx context.Context, table TableInfo, snapshotName st
 
 	log.Info().Int64("rows", count).Msg("COPY complete")
 	return CopyResult{Table: table, RowsCopied: count}
+}
+
+func quoteIdent(s string) string {
+	return `"` + strings.ReplaceAll(s, `"`, `""`) + `"`
+}
+
+func quoteQualifiedName(schema, table string) string {
+	if schema == "" || schema == "public" {
+		return quoteIdent(table)
+	}
+	return quoteIdent(schema) + "." + quoteIdent(table)
 }

@@ -28,15 +28,16 @@ type Model struct {
 
 // NewModel creates a new TUI model connected to the given metrics collector.
 func NewModel(collector *metrics.Collector) Model {
+	sub := collector.Subscribe()
 	return Model{
 		collector:  collector,
+		sub:        sub,
 		lagHistory: components.NewLagHistory(60),
 	}
 }
 
 // Init starts the subscription to metrics updates.
 func (m Model) Init() tea.Cmd {
-	m.sub = m.collector.Subscribe()
 	return waitForSnapshot(m.sub)
 }
 

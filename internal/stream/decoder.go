@@ -308,6 +308,6 @@ func (d *Decoder) ConfirmLSN(lsn pglogrepl.LSN) {
 func (d *Decoder) Close() {
 	if d.cancel != nil {
 		d.cancel()
+		<-d.done
 	}
-	<-d.done
 }
