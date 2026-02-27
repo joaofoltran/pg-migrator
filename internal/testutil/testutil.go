@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -57,6 +58,25 @@ func ComposeCommand() (string, []string) {
 	}
 }
 
+func ProjectRoot() string {
+	if v := os.Getenv("PGMIGRATOR_ROOT"); v != "" {
+		return v
+	}
+	dir, _ := os.Getwd()
+	for {
+		if _, err := os.Stat(filepath.Join(dir, "go.mod")); err == nil {
+			return dir
+		}
+		parent := filepath.Dir(dir)
+		if parent == dir {
+			break
+		}
+		dir = parent
+	}
+	d, _ := os.Getwd()
+	return d
+}
+
 func RunCompose(args ...string) error {
 	bin, baseArgs := ComposeCommand()
 	if bin == "" {
@@ -68,9 +88,13 @@ func RunCompose(args ...string) error {
 		composeFile = "docker-compose.test.yml"
 	}
 
-	fullArgs := append(baseArgs, "-f", composeFile)
+	root := ProjectRoot()
+	absCompose := filepath.Join(root, composeFile)
+
+	fullArgs := append(baseArgs, "-f", absCompose)
 	fullArgs = append(fullArgs, args...)
 	cmd := exec.Command(bin, fullArgs...)
+	cmd.Dir = root
 	cmd.Stdout = os.Stderr
 	cmd.Stderr = os.Stderr
 	return cmd.Run()

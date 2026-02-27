@@ -74,29 +74,54 @@ func New(cfg *config.Config, logger zerolog.Logger) *Pipeline {
 	}
 }
 
+// SetLogger replaces the pipeline logger. Use this to redirect log output
+// (e.g. into the TUI metrics collector instead of stderr).
+func (p *Pipeline) SetLogger(logger zerolog.Logger) {
+	p.logger = logger.With().Str("component", "pipeline").Logger()
+}
+
 // connect establishes all required database connections.
 func (p *Pipeline) connect(ctx context.Context) error {
-	// Replication connection to source.
-	replConn, err := pgconn.Connect(ctx, p.cfg.Source.ReplicationDSN())
+	connTimeout := 30 * time.Second
+
+	p.logger.Info().Str("host", p.cfg.Source.Host).Uint16("port", p.cfg.Source.Port).Str("db", p.cfg.Source.DBName).Msg("connecting to source (replication)")
+	replCtx, replCancel := context.WithTimeout(ctx, connTimeout)
+	replConn, err := pgconn.Connect(replCtx, p.cfg.Source.ReplicationDSN())
+	replCancel()
 	if err != nil {
-		return fmt.Errorf("replication connection: %w", err)
+		return fmt.Errorf("replication connection to %s:%d/%s: %w", p.cfg.Source.Host, p.cfg.Source.Port, p.cfg.Source.DBName, err)
 	}
 	p.replConn = replConn
 
-	// Connection pool to source (for snapshot COPY).
+	p.logger.Info().Str("host", p.cfg.Source.Host).Uint16("port", p.cfg.Source.Port).Str("db", p.cfg.Source.DBName).Msg("connecting to source (pool)")
 	srcPool, err := pgxpool.New(ctx, p.cfg.Source.DSN())
 	if err != nil {
 		return fmt.Errorf("source pool: %w", err)
 	}
+	pingCtx, pingCancel := context.WithTimeout(ctx, connTimeout)
+	if err := srcPool.Ping(pingCtx); err != nil {
+		pingCancel()
+		srcPool.Close()
+		return fmt.Errorf("source pool ping %s:%d/%s: %w", p.cfg.Source.Host, p.cfg.Source.Port, p.cfg.Source.DBName, err)
+	}
+	pingCancel()
 	p.srcPool = srcPool
 
-	// Connection pool to destination.
+	p.logger.Info().Str("host", p.cfg.Dest.Host).Uint16("port", p.cfg.Dest.Port).Str("db", p.cfg.Dest.DBName).Msg("connecting to destination (pool)")
 	dstPool, err := pgxpool.New(ctx, p.cfg.Dest.DSN())
 	if err != nil {
 		return fmt.Errorf("dest pool: %w", err)
 	}
+	pingCtx2, pingCancel2 := context.WithTimeout(ctx, connTimeout)
+	if err := dstPool.Ping(pingCtx2); err != nil {
+		pingCancel2()
+		dstPool.Close()
+		return fmt.Errorf("dest pool ping %s:%d/%s: %w", p.cfg.Dest.Host, p.cfg.Dest.Port, p.cfg.Dest.DBName, err)
+	}
+	pingCancel2()
 	p.dstPool = dstPool
 
+	p.logger.Info().Msg("all connections established")
 	return nil
 }
 
@@ -105,6 +130,37 @@ func (p *Pipeline) initComponents() {
 	p.decoder = stream.NewDecoder(p.replConn, p.cfg.Replication.SlotName, p.cfg.Replication.Publication, p.logger)
 	p.applier = replay.NewApplier(p.dstPool, p.logger)
 	p.copier = snapshot.NewCopier(p.srcPool, p.dstPool, p.cfg.Snapshot.Workers, p.logger)
+	lastReported := &sync.Map{}
+	p.copier.SetProgressFunc(func(table snapshot.TableInfo, event string, rowsCopied int64) {
+		key := table.Schema + "." + table.Name
+		switch event {
+		case "start":
+			lastReported.Store(key, int64(0))
+			p.Metrics.TableStarted(table.Schema, table.Name)
+		case "progress":
+			var delta int64
+			if prev, ok := lastReported.Load(key); ok {
+				delta = rowsCopied - prev.(int64)
+			} else {
+				delta = rowsCopied
+			}
+			lastReported.Store(key, rowsCopied)
+			p.Metrics.UpdateTableProgress(table.Schema, table.Name, rowsCopied, 0)
+			p.Metrics.RecordApplied(0, delta, 0)
+		case "done":
+			var delta int64
+			if prev, ok := lastReported.Load(key); ok {
+				delta = rowsCopied - prev.(int64)
+			}
+			if delta > 0 {
+				p.Metrics.RecordApplied(0, delta, 0)
+			}
+			p.Metrics.TableDone(table.Schema, table.Name, rowsCopied)
+			p.mu.Lock()
+			p.progress.TablesCopied++
+			p.mu.Unlock()
+		}
+	})
 	p.schemaMgr = schema.NewMigrator(p.srcPool, p.dstPool, p.logger)
 	p.coordinator = sentinel.NewCoordinator(p.messages, p.logger)
 
@@ -137,37 +193,37 @@ func (p *Pipeline) RunClone(ctx context.Context) error {
 
 	// Dump and apply schema.
 	p.setPhase("schema")
+	p.logger.Info().Msg("dumping schema from source")
 	ddl, err := p.schemaMgr.DumpSchema(ctx, p.cfg.Source.DSN())
 	if err != nil {
 		return fmt.Errorf("dump schema: %w", err)
 	}
+	p.logger.Info().Msg("applying schema to destination")
 	if err := p.schemaMgr.ApplySchema(ctx, ddl); err != nil {
 		return fmt.Errorf("apply schema: %w", err)
 	}
 
 	// Create replication slot to get consistent snapshot.
-	msgCh, snapshotName, err := p.decoder.Start(ctx, 0)
+	// The snapshot stays valid until StartStreaming is called.
+	p.logger.Info().Str("slot", p.cfg.Replication.SlotName).Msg("creating replication slot")
+	snapshotName, err := p.decoder.CreateSlot(ctx, 0)
 	if err != nil {
-		return fmt.Errorf("start decoder: %w", err)
+		return fmt.Errorf("create slot: %w", err)
 	}
-	// We don't consume msgCh for clone-only; drain in background.
-	go func() {
-		for range msgCh {
-		}
-	}()
+	p.logger.Info().Str("snapshot", snapshotName).Msg("replication slot created")
 
-	// Parallel COPY using the snapshot.
+	// Parallel COPY using the snapshot (must complete before StartStreaming).
 	p.setPhase("copy")
 	tables, err := p.copier.ListTables(ctx)
 	if err != nil {
 		return fmt.Errorf("list tables: %w", err)
 	}
+	p.logger.Info().Int("tables", len(tables)).Int("workers", p.cfg.Snapshot.Workers).Msg("starting parallel COPY")
 
 	p.mu.Lock()
 	p.progress.TablesTotal = len(tables)
 	p.mu.Unlock()
 
-	// Initialize metrics table tracking.
 	p.initTableMetrics(tables)
 
 	results := p.copier.CopyAll(ctx, tables, snapshotName)
@@ -176,12 +232,18 @@ func (p *Pipeline) RunClone(ctx context.Context) error {
 			p.Metrics.RecordError(r.Err)
 			return fmt.Errorf("copy %s: %w", r.Table.QualifiedName(), r.Err)
 		}
-		p.mu.Lock()
-		p.progress.TablesCopied++
-		p.mu.Unlock()
-		p.Metrics.TableDone(r.Table.Schema, r.Table.Name, r.RowsCopied)
-		p.Metrics.RecordApplied(0, r.RowsCopied, r.Table.SizeBytes)
+		p.Metrics.RecordApplied(0, 0, r.Table.SizeBytes)
 	}
+
+	// Start and immediately drain the replication stream (clone-only, no CDC).
+	msgCh, err := p.decoder.StartStreaming(ctx)
+	if err != nil {
+		return fmt.Errorf("start streaming: %w", err)
+	}
+	go func() {
+		for range msgCh {
+		}
+	}()
 
 	p.setPhase("done")
 	p.logger.Info().Msg("clone completed")
@@ -201,41 +263,36 @@ func (p *Pipeline) RunCloneAndFollow(ctx context.Context) error {
 
 	// Schema.
 	p.setPhase("schema")
+	p.logger.Info().Msg("dumping schema from source")
 	ddl, err := p.schemaMgr.DumpSchema(ctx, p.cfg.Source.DSN())
 	if err != nil {
 		return fmt.Errorf("dump schema: %w", err)
 	}
+	p.logger.Info().Msg("applying schema to destination")
 	if err := p.schemaMgr.ApplySchema(ctx, ddl); err != nil {
 		return fmt.Errorf("apply schema: %w", err)
 	}
 
-	// Start decoder (creates slot, gets snapshot).
-	msgCh, snapshotName, err := p.decoder.Start(ctx, 0)
+	// Create replication slot to get consistent snapshot.
+	p.logger.Info().Str("slot", p.cfg.Replication.SlotName).Msg("creating replication slot")
+	snapshotName, err := p.decoder.CreateSlot(ctx, 0)
 	if err != nil {
-		return fmt.Errorf("start decoder: %w", err)
+		return fmt.Errorf("create slot: %w", err)
 	}
+	p.logger.Info().Str("snapshot", snapshotName).Msg("replication slot created")
 
-	// Buffer messages while COPY runs.
-	buffered := make(chan stream.Message, 4096)
-	go func() {
-		for msg := range msgCh {
-			buffered <- msg
-		}
-		close(buffered)
-	}()
-
-	// Parallel COPY.
+	// Parallel COPY using the snapshot (must complete before StartStreaming).
 	p.setPhase("copy")
 	tables, err := p.copier.ListTables(ctx)
 	if err != nil {
 		return fmt.Errorf("list tables: %w", err)
 	}
+	p.logger.Info().Int("tables", len(tables)).Int("workers", p.cfg.Snapshot.Workers).Msg("starting parallel COPY")
 
 	p.mu.Lock()
 	p.progress.TablesTotal = len(tables)
 	p.mu.Unlock()
 
-	// Initialize metrics table tracking.
 	p.initTableMetrics(tables)
 
 	results := p.copier.CopyAll(ctx, tables, snapshotName)
@@ -244,25 +301,207 @@ func (p *Pipeline) RunCloneAndFollow(ctx context.Context) error {
 			p.Metrics.RecordError(r.Err)
 			return fmt.Errorf("copy %s: %w", r.Table.QualifiedName(), r.Err)
 		}
-		p.mu.Lock()
-		p.progress.TablesCopied++
-		p.mu.Unlock()
-		p.Metrics.TableDone(r.Table.Schema, r.Table.Name, r.RowsCopied)
-		p.Metrics.RecordApplied(0, r.RowsCopied, r.Table.SizeBytes)
+		p.Metrics.RecordApplied(0, 0, r.Table.SizeBytes)
+	}
+
+	// COPY complete — now start streaming. This invalidates the snapshot
+	// but we no longer need it. WAL accumulated since the slot was created
+	// will be delivered through the channel.
+	msgCh, err := p.decoder.StartStreaming(ctx)
+	if err != nil {
+		return fmt.Errorf("start streaming: %w", err)
 	}
 
 	// Transition to CDC.
 	p.setPhase("streaming")
 	p.logger.Info().Msg("COPY complete, switching to CDC streaming")
 
-	// Mark all tables as streaming.
 	for _, t := range tables {
 		p.Metrics.TableStreaming(t.Schema, t.Name)
 	}
 
-	var applierCh <-chan stream.Message = buffered
+	var applierCh <-chan stream.Message = msgCh
 	if p.bidiFilter != nil {
-		applierCh = p.bidiFilter.Run(ctx, buffered)
+		applierCh = p.bidiFilter.Run(ctx, msgCh)
+	}
+
+	return p.applier.Start(ctx, applierCh, func(lsn pglogrepl.LSN) {
+		p.decoder.ConfirmLSN(lsn)
+		p.mu.Lock()
+		p.progress.LastLSN = lsn
+		p.mu.Unlock()
+		p.Metrics.RecordApplied(lsn, 1, 0)
+		p.Metrics.RecordConfirmedLSN(lsn)
+	})
+}
+
+// SlotInfo holds information about an existing replication slot.
+type SlotInfo struct {
+	SlotName      string
+	ConfirmedLSN  pglogrepl.LSN
+	RestartLSN    pglogrepl.LSN
+	Active        bool
+}
+
+// checkSlot queries the source for the replication slot and returns its info.
+func (p *Pipeline) checkSlot(ctx context.Context) (*SlotInfo, error) {
+	var slotName string
+	var confirmedFlush, restart *string
+	var active bool
+
+	err := p.srcPool.QueryRow(ctx, `
+		SELECT slot_name, confirmed_flush_lsn::text, restart_lsn::text, active
+		FROM pg_replication_slots
+		WHERE slot_name = $1`, p.cfg.Replication.SlotName).Scan(&slotName, &confirmedFlush, &restart, &active)
+	if err != nil {
+		return nil, fmt.Errorf("slot %q not found: %w", p.cfg.Replication.SlotName, err)
+	}
+
+	info := &SlotInfo{SlotName: slotName, Active: active}
+	if confirmedFlush != nil {
+		lsn, err := pglogrepl.ParseLSN(*confirmedFlush)
+		if err != nil {
+			return nil, fmt.Errorf("parse confirmed_flush_lsn: %w", err)
+		}
+		info.ConfirmedLSN = lsn
+	}
+	if restart != nil {
+		lsn, err := pglogrepl.ParseLSN(*restart)
+		if err != nil {
+			return nil, fmt.Errorf("parse restart_lsn: %w", err)
+		}
+		info.RestartLSN = lsn
+	}
+	return info, nil
+}
+
+// RunResumeCloneAndFollow resumes a previously interrupted clone:
+// 1. Verifies the replication slot still exists (WAL is preserved)
+// 2. Compares source vs dest row counts to find incomplete tables
+// 3. Truncates and re-COPYs only incomplete tables (without snapshot)
+// 4. Starts CDC streaming from the slot's LSN
+func (p *Pipeline) RunResumeCloneAndFollow(ctx context.Context) error {
+	ctx, p.cancel = context.WithCancel(ctx)
+	p.setPhase("connecting")
+	p.startPersister()
+
+	if err := p.connect(ctx); err != nil {
+		return err
+	}
+	p.initComponents()
+
+	// Ensure schema exists on destination (idempotent).
+	p.setPhase("schema")
+	p.logger.Info().Msg("dumping schema from source")
+	ddl, err := p.schemaMgr.DumpSchema(ctx, p.cfg.Source.DSN())
+	if err != nil {
+		return fmt.Errorf("dump schema: %w", err)
+	}
+	p.logger.Info().Msg("applying schema to destination")
+	if err := p.schemaMgr.ApplySchema(ctx, ddl); err != nil {
+		return fmt.Errorf("apply schema: %w", err)
+	}
+
+	// Check that the replication slot survived.
+	p.setPhase("resuming")
+	slotInfo, err := p.checkSlot(ctx)
+	if err != nil {
+		return fmt.Errorf("cannot resume: %w — run a full clone instead", err)
+	}
+	if slotInfo.Active {
+		return fmt.Errorf("cannot resume: slot %q is active (another process is using it)", slotInfo.SlotName)
+	}
+
+	startLSN := slotInfo.RestartLSN
+	if slotInfo.ConfirmedLSN > startLSN {
+		startLSN = slotInfo.ConfirmedLSN
+	}
+	p.logger.Info().
+		Stringer("restart_lsn", slotInfo.RestartLSN).
+		Stringer("confirmed_lsn", slotInfo.ConfirmedLSN).
+		Stringer("start_lsn", startLSN).
+		Msg("replication slot found, WAL is preserved")
+
+	// List source tables and check dest completeness.
+	srcTables, err := p.copier.ListTables(ctx)
+	if err != nil {
+		return fmt.Errorf("list tables: %w", err)
+	}
+
+	var incompleteTables []snapshot.TableInfo
+	var completeTables []snapshot.TableInfo
+	for _, t := range srcTables {
+		destCount, err := p.copier.DestRowCount(ctx, t.Schema, t.Name)
+		if err != nil {
+			return fmt.Errorf("check dest row count for %s: %w", t.QualifiedName(), err)
+		}
+		if destCount < t.RowCount {
+			p.logger.Info().
+				Str("table", t.QualifiedName()).
+				Int64("source_rows", t.RowCount).
+				Int64("dest_rows", destCount).
+				Msg("incomplete table — will truncate and re-copy")
+			incompleteTables = append(incompleteTables, t)
+		} else {
+			p.logger.Info().
+				Str("table", t.QualifiedName()).
+				Int64("rows", destCount).
+				Msg("table complete — skipping")
+			completeTables = append(completeTables, t)
+		}
+	}
+
+	p.mu.Lock()
+	p.progress.TablesTotal = len(srcTables)
+	p.progress.TablesCopied = len(completeTables)
+	p.mu.Unlock()
+
+	p.initTableMetrics(srcTables)
+	for _, t := range completeTables {
+		p.Metrics.TableDone(t.Schema, t.Name, t.RowCount)
+	}
+
+	if len(incompleteTables) > 0 {
+		p.setPhase("copy")
+		p.logger.Info().Int("tables", len(incompleteTables)).Msg("truncating and re-copying incomplete tables")
+
+		for _, t := range incompleteTables {
+			p.logger.Info().Str("table", t.QualifiedName()).Msg("truncating")
+			if err := p.copier.TruncateTable(ctx, t.Schema, t.Name); err != nil {
+				return fmt.Errorf("truncate %s: %w", t.QualifiedName(), err)
+			}
+		}
+
+		results := p.copier.CopyAll(ctx, incompleteTables, "")
+		for _, r := range results {
+			if r.Err != nil {
+				p.Metrics.RecordError(r.Err)
+				return fmt.Errorf("copy %s: %w", r.Table.QualifiedName(), r.Err)
+			}
+			p.Metrics.RecordApplied(0, 0, r.Table.SizeBytes)
+		}
+	} else {
+		p.logger.Info().Msg("all tables complete — skipping COPY phase")
+	}
+
+	// Start streaming from the slot's LSN. The decoder won't create a new slot.
+	p.decoder = stream.NewDecoder(p.replConn, p.cfg.Replication.SlotName, p.cfg.Replication.Publication, p.logger)
+	p.decoder.CreateSlot(ctx, startLSN) //nolint:errcheck
+	msgCh, err := p.decoder.StartStreaming(ctx)
+	if err != nil {
+		return fmt.Errorf("start streaming: %w", err)
+	}
+
+	p.setPhase("streaming")
+	p.logger.Info().Msg("resumed CDC streaming")
+
+	for _, t := range srcTables {
+		p.Metrics.TableStreaming(t.Schema, t.Name)
+	}
+
+	var applierCh <-chan stream.Message = msgCh
+	if p.bidiFilter != nil {
+		applierCh = p.bidiFilter.Run(ctx, msgCh)
 	}
 
 	return p.applier.Start(ctx, applierCh, func(lsn pglogrepl.LSN) {

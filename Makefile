@@ -1,7 +1,7 @@
 BINARY := pgmigrator
 PKG := ./cmd/pgmigrator
 
-.PHONY: build test test-integration lint clean web-install web-build web-dev build-full docker install
+.PHONY: build test test-integration test-benchmark test-stop setup-bench setup-bench-down lint clean web-install web-build web-dev build-full docker install
 
 build:
 	go build -o $(BINARY) $(PKG)
@@ -20,9 +20,31 @@ test-integration:
 ifndef CONTAINER_RT
 	$(error No container runtime found. Install docker or podman.)
 endif
-	$(COMPOSE_CMD) -f docker-compose.test.yml up -d --wait
-	go test -tags=integration -v -count=1 -timeout=300s ./internal/pipeline/ || ($(COMPOSE_CMD) -f docker-compose.test.yml down -v && exit 1)
-	$(COMPOSE_CMD) -f docker-compose.test.yml down -v
+	@rc=0; \
+	cleanup() { echo ""; echo "Tearing down test containers..."; $(COMPOSE_CMD) -f docker-compose.test.yml down -v; exit $$rc; }; \
+	trap cleanup EXIT INT TERM; \
+	$(COMPOSE_CMD) -f docker-compose.test.yml up -d --wait && \
+	go test -tags=integration -v -count=1 -timeout=300s $(if $(RUN),-run=$(RUN)) ./internal/pipeline/ || rc=$$?
+
+test-benchmark:
+ifndef CONTAINER_RT
+	$(error No container runtime found. Install docker or podman.)
+endif
+	@rc=0; \
+	cleanup() { echo ""; echo "Tearing down benchmark containers..."; $(COMPOSE_CMD) -f docker-compose.bench.yml down -v; exit $$rc; }; \
+	trap cleanup EXIT INT TERM; \
+	$(COMPOSE_CMD) -f docker-compose.bench.yml up -d --wait && \
+	COMPOSE_FILE=docker-compose.bench.yml go test -tags=benchmark -v -count=1 -timeout=4h $(if $(RUN),-run=$(RUN)) ./internal/pipeline/ || rc=$$?
+
+test-stop:
+	-$(COMPOSE_CMD) -f docker-compose.test.yml down -v 2>/dev/null
+	-$(COMPOSE_CMD) -f docker-compose.bench.yml down -v 2>/dev/null
+
+setup-bench:
+	@./scripts/setup-bench.sh $(if $(SIZE),--size $(SIZE))
+
+setup-bench-down:
+	@./scripts/setup-bench.sh --down
 
 lint:
 	go vet ./...

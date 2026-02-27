@@ -14,6 +14,9 @@ import (
 // snapshotMsg carries a new metrics snapshot into the Bubble Tea update loop.
 type snapshotMsg metrics.Snapshot
 
+// pipelineDoneMsg signals that the pipeline goroutine has finished.
+type pipelineDoneMsg struct{ err error }
+
 // Model is the main Bubble Tea model for the pgmigrator TUI dashboard.
 type Model struct {
 	collector  *metrics.Collector
@@ -21,24 +24,38 @@ type Model struct {
 	snapshot   metrics.Snapshot
 	lagHistory *components.LagHistory
 
+	pipelineErr chan error
+	finalErr    error
+
 	width  int
 	height int
 	ready  bool
 }
 
 // NewModel creates a new TUI model connected to the given metrics collector.
-func NewModel(collector *metrics.Collector) Model {
+func NewModel(collector *metrics.Collector, pipelineErr chan error) Model {
 	sub := collector.Subscribe()
 	return Model{
-		collector:  collector,
-		sub:        sub,
-		lagHistory: components.NewLagHistory(60),
+		collector:   collector,
+		sub:         sub,
+		lagHistory:  components.NewLagHistory(60),
+		pipelineErr: pipelineErr,
 	}
 }
 
 // Init starts the subscription to metrics updates.
 func (m Model) Init() tea.Cmd {
-	return waitForSnapshot(m.sub)
+	return tea.Batch(waitForSnapshot(m.sub), waitForPipeline(m.pipelineErr))
+}
+
+func waitForPipeline(ch chan error) tea.Cmd {
+	if ch == nil {
+		return nil
+	}
+	return func() tea.Msg {
+		err := <-ch
+		return pipelineDoneMsg{err: err}
+	}
 }
 
 func waitForSnapshot(sub chan metrics.Snapshot) tea.Cmd {
@@ -71,6 +88,22 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case snapshotMsg:
 		m.snapshot = metrics.Snapshot(msg)
 		return m, waitForSnapshot(m.sub)
+
+	case pipelineDoneMsg:
+		if msg.err != nil {
+			m.finalErr = msg.err
+			if m.sub != nil {
+				m.collector.Unsubscribe(m.sub)
+				m.sub = nil
+			}
+			return m, tea.Quit
+		}
+		m.finalErr = nil
+		if m.sub != nil {
+			m.collector.Unsubscribe(m.sub)
+			m.sub = nil
+		}
+		return m, tea.Quit
 	}
 
 	return m, nil
@@ -134,13 +167,17 @@ func (m Model) View() string {
 	return strings.Join(sections, "\n")
 }
 
-// Run starts the TUI in fullscreen mode.
-func Run(collector *metrics.Collector) error {
-	model := NewModel(collector)
+// Run starts the TUI in fullscreen mode. If pipelineErr is non-nil, the TUI
+// will automatically quit when the pipeline finishes (success or failure).
+func Run(collector *metrics.Collector, pipelineErr chan error) error {
+	model := NewModel(collector, pipelineErr)
 	p := tea.NewProgram(model, tea.WithAltScreen())
-	_, err := p.Run()
+	final, err := p.Run()
 	if err != nil {
 		return fmt.Errorf("tui: %w", err)
+	}
+	if m, ok := final.(Model); ok && m.finalErr != nil {
+		return m.finalErr
 	}
 	return nil
 }

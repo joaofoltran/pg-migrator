@@ -1,0 +1,3 @@
+web/bun.lock
+web/src/vite-env.d.ts
+web/tsconfig.tsbuildinfo

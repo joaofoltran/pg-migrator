@@ -13,7 +13,7 @@ var switchoverTimeout time.Duration
 var switchoverCmd = &cobra.Command{
 	Use:   "switchover",
 	Short: "Initiate zero-downtime switchover via sentinel marker",
-	Long: `Switchover injects a "magic chicken" sentinel message into the replication
+	Long: `Switchover injects a sentinel message into the replication
 stream and waits for confirmation that it has been applied to the destination.
 This confirms the destination is fully caught up and ready to serve traffic.`,
 	RunE: func(cmd *cobra.Command, args []string) error {

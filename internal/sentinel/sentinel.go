@@ -13,7 +13,7 @@ import (
 )
 
 // SentinelMessage is a synthetic message injected into the pipeline for
-// zero-downtime switchover coordination ("magic chicken").
+// zero-downtime switchover coordination.
 type SentinelMessage struct {
 	ID      string
 	SentLSN pglogrepl.LSN

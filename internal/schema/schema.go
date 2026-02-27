@@ -2,10 +2,13 @@ package schema
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"os/exec"
 	"strings"
+	"time"
 
+	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/rs/zerolog"
 )
@@ -40,13 +43,143 @@ func (m *Migrator) DumpSchema(ctx context.Context, dsn string) (string, error) {
 }
 
 // ApplySchema applies the given DDL to the destination database.
+// It strips psql meta-commands (lines starting with \) and SQL comments
+// from pg_dump output, then executes each statement individually.
 func (m *Migrator) ApplySchema(ctx context.Context, ddl string) error {
-	_, err := m.dest.Exec(ctx, ddl)
-	if err != nil {
-		return fmt.Errorf("apply schema: %w", err)
+	stmts := splitStatements(ddl)
+	applied := 0
+	for i, stmt := range stmts {
+		upper := strings.ToUpper(strings.TrimSpace(stmt))
+		if strings.HasPrefix(upper, "SELECT ") {
+			continue
+		}
+		m.logger.Debug().Int("index", i).Str("statement", truncate(stmt, 120)).Msg("applying schema statement")
+		stmtCtx, cancel := context.WithTimeout(ctx, 30*time.Second)
+		_, err := m.dest.Exec(stmtCtx, stmt)
+		cancel()
+		if err != nil {
+			if isDuplicateObjectErr(err) {
+				m.logger.Debug().Str("statement", truncate(stmt, 120)).Msg("skipping (already exists)")
+				continue
+			}
+			m.logger.Warn().Str("statement", truncate(stmt, 200)).Err(err).Msg("schema statement failed")
+			return fmt.Errorf("apply schema: %w", err)
+		}
+		applied++
 	}
-	m.logger.Info().Msg("schema applied to destination")
+	m.logger.Info().Int("applied", applied).Int("total", len(stmts)).Msg("schema applied to destination")
 	return nil
+}
+
+// splitStatements parses pg_dump output into individual SQL statements,
+// stripping psql meta-commands and comments. It correctly handles
+// dollar-quoted strings (e.g. $$ or $tag$) so that semicolons inside
+// PL/pgSQL function bodies are not treated as statement terminators.
+func splitStatements(dump string) []string {
+	var stmts []string
+	var current strings.Builder
+	inDollarQuote := false
+	dollarTag := ""
+
+	for _, line := range strings.Split(dump, "\n") {
+		trimmed := strings.TrimSpace(line)
+
+		if trimmed == "" || strings.HasPrefix(trimmed, "--") {
+			continue
+		}
+		if strings.HasPrefix(trimmed, "\\") {
+			continue
+		}
+
+		current.WriteString(line)
+		current.WriteByte('\n')
+
+		inDollarQuote, dollarTag = trackDollarQuoting(line, inDollarQuote, dollarTag)
+
+		if !inDollarQuote && strings.HasSuffix(trimmed, ";") {
+			stmt := strings.TrimSpace(current.String())
+			if stmt != "" {
+				stmts = append(stmts, stmt)
+			}
+			current.Reset()
+		}
+	}
+
+	if trailing := strings.TrimSpace(current.String()); trailing != "" {
+		stmts = append(stmts, trailing)
+	}
+
+	return stmts
+}
+
+// trackDollarQuoting scans a line for dollar-quote delimiters ($$ or $tag$)
+// and toggles the quoting state. Returns the updated state.
+func trackDollarQuoting(line string, inQuote bool, currentTag string) (bool, string) {
+	i := 0
+	for i < len(line) {
+		if line[i] != '$' {
+			i++
+			continue
+		}
+		tag, end := parseDollarTag(line, i)
+		if tag == "" {
+			i++
+			continue
+		}
+		if !inQuote {
+			inQuote = true
+			currentTag = tag
+		} else if tag == currentTag {
+			inQuote = false
+			currentTag = ""
+		}
+		i = end
+	}
+	return inQuote, currentTag
+}
+
+// parseDollarTag tries to parse a dollar-quote tag starting at pos.
+// Valid tags: $$ or $identifier$ where identifier is [A-Za-z0-9_].
+// Returns the full tag (e.g. "$$" or "$body$") and the index past the
+// closing $. Returns ("", pos) if no valid tag found.
+func parseDollarTag(line string, pos int) (string, int) {
+	if pos >= len(line) || line[pos] != '$' {
+		return "", pos
+	}
+	j := pos + 1
+	if j < len(line) && line[j] == '$' {
+		return "$$", j + 1
+	}
+	for j < len(line) && isDollarTagChar(line[j]) {
+		j++
+	}
+	if j > pos+1 && j < len(line) && line[j] == '$' {
+		tag := line[pos : j+1]
+		return tag, j + 1
+	}
+	return "", pos
+}
+
+func isDollarTagChar(c byte) bool {
+	return (c >= 'A' && c <= 'Z') || (c >= 'a' && c <= 'z') || (c >= '0' && c <= '9') || c == '_'
+}
+
+func truncate(s string, n int) string {
+	if len(s) <= n {
+		return s
+	}
+	return s[:n] + "..."
+}
+
+func isDuplicateObjectErr(err error) bool {
+	var pgErr *pgconn.PgError
+	if errors.As(err, &pgErr) {
+		switch pgErr.Code {
+		case "42P07", "42P16", "42710":
+			return true
+		}
+	}
+	return false
 }
 
 // SchemaDiff represents differences between source and destination schemas.

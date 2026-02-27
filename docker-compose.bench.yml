@@ -1,0 +1,60 @@
+services:
+  source-pg:
+    image: postgres:18
+    ports:
+      - "5432:5432"
+    environment:
+      POSTGRES_DB: source
+      POSTGRES_PASSWORD: source
+      PGDATA: /var/lib/postgresql/data
+    command:
+      - postgres
+      - -c
+      - wal_level=logical
+      - -c
+      - max_replication_slots=10
+      - -c
+      - max_wal_senders=10
+      - -c
+      - shared_buffers=512MB
+      - -c
+      - work_mem=64MB
+      - -c
+      - maintenance_work_mem=256MB
+      - -c
+      - max_wal_size=2GB
+      - -c
+      - checkpoint_timeout=30min
+    shm_size: 1g
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      interval: 2s
+      timeout: 5s
+      retries: 10
+
+  dest-pg:
+    image: postgres:18
+    ports:
+      - "5433:5432"
+    environment:
+      POSTGRES_DB: dest
+      POSTGRES_PASSWORD: dest
+      PGDATA: /var/lib/postgresql/data
+    command:
+      - postgres
+      - -c
+      - shared_buffers=512MB
+      - -c
+      - work_mem=64MB
+      - -c
+      - maintenance_work_mem=256MB
+      - -c
+      - max_wal_size=2GB
+      - -c
+      - checkpoint_timeout=30min
+    shm_size: 1g
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      interval: 2s
+      timeout: 5s
+      retries: 10

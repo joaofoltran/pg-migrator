@@ -4,6 +4,8 @@ import (
 	"errors"
 	"fmt"
 	"net/url"
+	"strconv"
+	"strings"
 )
 
 // DatabaseConfig holds connection parameters for a PostgreSQL instance.
@@ -13,6 +15,42 @@ type DatabaseConfig struct {
 	User     string
 	Password string
 	DBName   string
+}
+
+// ParseURI parses a PostgreSQL connection URI (postgres://user:pass@host:port/dbname)
+// into the DatabaseConfig fields, unconditionally setting each component found in the URI.
+func (d *DatabaseConfig) ParseURI(uri string) error {
+	u, err := url.Parse(uri)
+	if err != nil {
+		return fmt.Errorf("invalid connection URI: %w", err)
+	}
+	if u.Scheme != "postgres" && u.Scheme != "postgresql" {
+		return fmt.Errorf("unsupported URI scheme %q (expected postgres or postgresql)", u.Scheme)
+	}
+
+	if u.Hostname() != "" {
+		d.Host = u.Hostname()
+	}
+	if u.Port() != "" {
+		p, err := strconv.ParseUint(u.Port(), 10, 16)
+		if err != nil {
+			return fmt.Errorf("invalid port in URI: %w", err)
+		}
+		d.Port = uint16(p)
+	}
+	if u.User != nil {
+		if username := u.User.Username(); username != "" {
+			d.User = username
+		}
+		if password, ok := u.User.Password(); ok {
+			d.Password = password
+		}
+	}
+	dbname := strings.TrimPrefix(u.Path, "/")
+	if dbname != "" {
+		d.DBName = dbname
+	}
+	return nil
 }
 
 // DSN returns a standard PostgreSQL connection string.

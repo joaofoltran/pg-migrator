@@ -130,6 +130,7 @@ Performs a complete migration of the source database to the destination:
 | Flag | Default | Description |
 |------|---------|-------------|
 | `--follow` | `false` | Continue with CDC streaming after initial copy |
+| `--resume` | `false` | Resume an interrupted clone (requires existing replication slot and `--follow`) |
 | `--api-port` | `0` | Enable HTTP API/Web UI on this port (0 = disabled) |
 | `--tui` | `false` | Show terminal dashboard during migration |
 
@@ -144,21 +145,35 @@ if cloneAPIPort > 0 {
     srv.StartBackground(cmd.Context(), cloneAPIPort)
 }
 
+run := p.RunClone
+if cloneFollow {
+    run = p.RunCloneAndFollow
+}
+if cloneResume {
+    run = p.RunResumeCloneAndFollow
+}
+
 if cloneTUI {
     // Run pipeline in background goroutine
     // Run TUI in foreground (blocking)
     // Return pipeline error when TUI exits
 }
 
-if cloneFollow {
-    return p.RunCloneAndFollow(cmd.Context())
-}
-return p.RunClone(cmd.Context())
+return run(cmd.Context())
 ```
 
 When `--tui` is enabled, the pipeline runs in a background goroutine while the TUI takes over the terminal. The TUI reads metrics directly from the in-process `Collector`. When the user quits the TUI (press `q`), the pipeline error (if any) is returned.
 
 When `--api-port` is set, the HTTP server starts in a background goroutine, serving the REST API and Web UI on the specified port.
+
+### Resume Mode (`--resume --follow`)
+
+When a clone is interrupted (OOM kill, crash, network failure), `--resume` recovers without data loss:
+
+1. **Slot check** — Verifies the replication slot from the original clone still exists. If the slot is gone, WAL is unrecoverable and you must start fresh.
+2. **Table comparison** — Compares source row counts (from `pg_stat_user_tables`) against actual destination row counts. Tables where `dest_rows < source_rows` are considered incomplete.
+3. **Selective re-copy** — Truncates only incomplete tables and re-COPYs them. Complete tables are skipped entirely.
+4. **CDC streaming** — Starts WAL streaming from the slot's restart LSN. All WAL accumulated during downtime is replayed — zero data loss.
 
 ### Examples
 
@@ -176,6 +191,9 @@ pgmigrator clone --follow --tui --api-port=7654 \
 
 # Clone with 8 parallel workers
 pgmigrator clone --copy-workers=8 --source-dbname=prod --dest-dbname=staging
+
+# Resume an interrupted clone (replication slot must still exist)
+pgmigrator clone --follow --resume --source-dbname=prod --dest-dbname=staging
 ```
 
 ---
@@ -234,7 +252,7 @@ pgmigrator switchover [flags]
 
 ### Description
 
-Injects a "magic chicken" sentinel message into the replication stream and waits for confirmation that it has been applied to the destination. When the sentinel is confirmed, it proves the destination has applied all WAL changes up to the injection point — the destination is fully caught up and ready to serve traffic.
+Injects a sentinel message into the replication stream and waits for confirmation that it has been applied to the destination. When the sentinel is confirmed, it proves the destination has applied all WAL changes up to the injection point — the destination is fully caught up and ready to serve traffic.
 
 ### Flags
 

@@ -7,14 +7,8 @@ services:
       - clone
       - --follow
       - --api-port=7654
-      - --source-host=source-pg
-      - --source-dbname=source
-      - --source-user=postgres
-      - --source-password=source
-      - --dest-host=dest-pg
-      - --dest-dbname=dest
-      - --dest-user=postgres
-      - --dest-password=dest
+      - --source-uri=postgres://postgres:source@source-pg:5432/source
+      - --dest-uri=postgres://postgres:dest@dest-pg:5432/dest
     depends_on:
       source-pg:
         condition: service_healthy
@@ -22,10 +16,11 @@ services:
         condition: service_healthy
 
   source-pg:
-    image: postgres:16
+    image: postgres:18
     environment:
       POSTGRES_DB: source
       POSTGRES_PASSWORD: source
+      PGDATA: /var/lib/postgresql/data
     command:
       - postgres
       - -c
@@ -34,6 +29,8 @@ services:
       - max_replication_slots=4
       - -c
       - max_wal_senders=4
+    volumes:
+      - source-data:/var/lib/postgresql/data
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U postgres"]
       interval: 5s
@@ -41,12 +38,19 @@ services:
       retries: 5
 
   dest-pg:
-    image: postgres:16
+    image: postgres:18
     environment:
       POSTGRES_DB: dest
       POSTGRES_PASSWORD: dest
+      PGDATA: /var/lib/postgresql/data
+    volumes:
+      - dest-data:/var/lib/postgresql/data
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U postgres"]
       interval: 5s
       timeout: 5s
       retries: 5
+
+volumes:
+  source-data:
+  dest-data:

@@ -11,7 +11,7 @@ pgmigrator takes a different approach:
 - **Zero database footprint** — only creates a replication slot and publication on the source. No triggers, no sentinel tables, no extensions.
 - **Owns the WAL stream** — reads directly from PostgreSQL's logical replication protocol (`pgoutput`), giving full control over the data pipeline.
 - **Consistent initial copy** — uses `SET TRANSACTION SNAPSHOT` so all parallel COPY workers see the same point-in-time view, with no gaps or duplicates when CDC streaming starts.
-- **Sentinel-based switchover** — injects a synthetic marker ("magic chicken") into the pipeline. When confirmed, it cryptographically proves the destination has applied every change up to that point. No lag guessing.
+- **Sentinel-based switchover** — injects a synthetic marker into the pipeline. When confirmed, it proves the destination has applied every change up to that point. No lag guessing.
 - **Bidirectional replication** — built-in loop detection via PostgreSQL's replication origin tagging, enabling A-to-B and B-to-A replication without infinite loops.
 
 ## Features
@@ -97,20 +97,18 @@ CREATE PUBLICATION pgmigrator_pub FOR ALL TABLES;
 ```bash
 # Full clone: schema + parallel COPY + CDC streaming
 pgmigrator clone --follow \
-    --source-host=source.db.internal --source-dbname=production \
-    --dest-host=dest.db.internal --dest-dbname=production \
-    --source-user=replication_user --source-password="$SOURCE_PW" \
-    --dest-user=migration_user --dest-password="$DEST_PW"
+    --source-uri="postgres://replication_user:$SOURCE_PW@source.db.internal/production" \
+    --dest-uri="postgres://migration_user:$DEST_PW@dest.db.internal/production"
 
 # With monitoring
 pgmigrator clone --follow --tui \
-    --source-host=source.db.internal --source-dbname=production \
-    --dest-host=dest.db.internal --dest-dbname=production
+    --source-uri="postgres://postgres@source.db.internal/production" \
+    --dest-uri="postgres://postgres@dest.db.internal/production"
 
 # Or with the web UI
 pgmigrator clone --follow --api-port=7654 \
-    --source-host=source.db.internal --source-dbname=production \
-    --dest-host=dest.db.internal --dest-dbname=production
+    --source-uri="postgres://postgres@source.db.internal/production" \
+    --dest-uri="postgres://postgres@dest.db.internal/production"
 ```
 
 ### Switchover
@@ -119,8 +117,8 @@ When you're ready to cut over traffic to the destination:
 
 ```bash
 pgmigrator switchover --timeout=30s \
-    --source-host=source.db.internal --source-dbname=production \
-    --dest-host=dest.db.internal --dest-dbname=production
+    --source-uri="postgres://postgres@source.db.internal/production" \
+    --dest-uri="postgres://postgres@dest.db.internal/production"
 ```
 
 This injects a sentinel, waits for the destination to confirm it has applied everything, and exits. At that point, the destination is guaranteed to be fully caught up.

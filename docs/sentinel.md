@@ -5,7 +5,7 @@
 
 ## Overview
 
-The sentinel package implements pgmigrator's zero-downtime switchover mechanism, internally nicknamed "magic chicken." It works by injecting a synthetic marker message into the pipeline and waiting for it to be confirmed by the applier. When the sentinel is confirmed, it proves that the destination database has applied all WAL changes up to the point of injection — the destination is fully caught up and ready to serve traffic.
+The sentinel package implements pgmigrator's zero-downtime switchover mechanism. It works by injecting a synthetic marker message into the pipeline and waiting for it to be confirmed by the applier. When the sentinel is confirmed, it proves that the destination database has applied all WAL changes up to the point of injection — the destination is fully caught up and ready to serve traffic.
 
 This is fundamentally different from lag-based switchover (checking if lag is below a threshold), which is inherently racy. The sentinel approach provides a cryptographic proof of consistency: the destination has seen everything the source produced up to that exact LSN.
 

@@ -122,3 +122,97 @@ func TestValidate_PartialMissing(t *testing.T) {
 		t.Errorf("should not have destination error: %v", err)
 	}
 }
+
+func TestParseURI(t *testing.T) {
+	tests := []struct {
+		name    string
+		uri     string
+		want    DatabaseConfig
+		wantErr bool
+	}{
+		{
+			name: "full URI",
+			uri:  "postgres://admin:secret@db.example.com:5433/mydb",
+			want: DatabaseConfig{Host: "db.example.com", Port: 5433, User: "admin", Password: "secret", DBName: "mydb"},
+		},
+		{
+			name: "postgresql scheme",
+			uri:  "postgresql://user:pass@host/db",
+			want: DatabaseConfig{Host: "host", User: "user", Password: "pass", DBName: "db"},
+		},
+		{
+			name: "no port",
+			uri:  "postgres://user:pass@host/db",
+			want: DatabaseConfig{Host: "host", User: "user", Password: "pass", DBName: "db"},
+		},
+		{
+			name: "no password",
+			uri:  "postgres://user@host:5432/db",
+			want: DatabaseConfig{Host: "host", Port: 5432, User: "user", DBName: "db"},
+		},
+		{
+			name: "empty password",
+			uri:  "postgres://user:@host:5432/db",
+			want: DatabaseConfig{Host: "host", Port: 5432, User: "user", DBName: "db"},
+		},
+		{
+			name: "special chars in password",
+			uri:  "postgres://user:p%40ss%3Aw%2Frd@host/db",
+			want: DatabaseConfig{Host: "host", User: "user", Password: "p@ss:w/rd", DBName: "db"},
+		},
+		{
+			name: "minimal",
+			uri:  "postgres://localhost/testdb",
+			want: DatabaseConfig{Host: "localhost", DBName: "testdb"},
+		},
+		{
+			name:    "bad scheme",
+			uri:     "mysql://user:pass@host/db",
+			wantErr: true,
+		},
+		{
+			name:    "garbage",
+			uri:     "://broken",
+			wantErr: true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			var got DatabaseConfig
+			err := got.ParseURI(tt.uri)
+			if tt.wantErr {
+				if err == nil {
+					t.Fatal("expected error, got nil")
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+			if got != tt.want {
+				t.Errorf("ParseURI(%q)\n  got  %+v\n  want %+v", tt.uri, got, tt.want)
+			}
+		})
+	}
+}
+
+func TestParseURI_ExplicitFlagOverride(t *testing.T) {
+	d := DatabaseConfig{Host: "override-host", Port: 9999}
+	err := d.ParseURI("postgres://user:pass@uri-host:5432/db")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if d.Host != "uri-host" {
+		t.Errorf("expected host from URI, got %q", d.Host)
+	}
+	if d.Port != 5432 {
+		t.Errorf("expected port from URI, got %d", d.Port)
+	}
+	if d.User != "user" {
+		t.Errorf("expected user from URI, got %q", d.User)
+	}
+	if d.DBName != "db" {
+		t.Errorf("expected dbname from URI, got %q", d.DBName)
+	}
+}

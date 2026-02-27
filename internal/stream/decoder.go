@@ -44,32 +44,40 @@ func NewDecoder(conn *pgconn.PgConn, slotName, publication string, logger zerolo
 	}
 }
 
-// Start begins streaming from the replication slot. It returns a channel of
-// Messages and the consistent snapshot name (empty string if slot already existed).
-func (d *Decoder) Start(ctx context.Context, startLSN pglogrepl.LSN) (<-chan Message, string, error) {
+// CreateSlot creates a replication slot and returns the exported snapshot name.
+// The snapshot remains valid until StartStreaming is called, so callers must
+// complete their COPY phase using the snapshot before calling StartStreaming.
+// If startLSN is non-zero, no slot is created and the snapshot name is empty.
+func (d *Decoder) CreateSlot(ctx context.Context, startLSN pglogrepl.LSN) (string, error) {
 	d.startLSN = startLSN
 
-	// Create or reuse the replication slot.
-	var snapshotName string
-	if startLSN == 0 {
-		result, err := pglogrepl.CreateReplicationSlot(ctx, d.conn, d.slotName, "pgoutput",
-			pglogrepl.CreateReplicationSlotOptions{Temporary: false})
-		if err != nil {
-			return nil, "", fmt.Errorf("create replication slot: %w", err)
-		}
-		snapshotName = result.SnapshotName
-		parsedLSN, err := pglogrepl.ParseLSN(result.ConsistentPoint)
-		if err != nil {
-			return nil, "", fmt.Errorf("parse consistent point LSN: %w", err)
-		}
-		d.startLSN = parsedLSN
-		d.logger.Info().
-			Str("slot", d.slotName).
-			Str("snapshot", snapshotName).
-			Stringer("lsn", d.startLSN).
-			Msg("created replication slot")
+	if startLSN != 0 {
+		return "", nil
 	}
 
+	result, err := pglogrepl.CreateReplicationSlot(ctx, d.conn, d.slotName, "pgoutput",
+		pglogrepl.CreateReplicationSlotOptions{Temporary: false})
+	if err != nil {
+		return "", fmt.Errorf("create replication slot: %w", err)
+	}
+	parsedLSN, err := pglogrepl.ParseLSN(result.ConsistentPoint)
+	if err != nil {
+		return "", fmt.Errorf("parse consistent point LSN: %w", err)
+	}
+	d.startLSN = parsedLSN
+	d.logger.Info().
+		Str("slot", d.slotName).
+		Str("snapshot", result.SnapshotName).
+		Stringer("lsn", d.startLSN).
+		Msg("created replication slot")
+
+	return result.SnapshotName, nil
+}
+
+// StartStreaming begins consuming WAL from the replication slot. This
+// invalidates the snapshot returned by CreateSlot, so it must only be
+// called after the COPY phase is complete.
+func (d *Decoder) StartStreaming(ctx context.Context) (<-chan Message, error) {
 	err := pglogrepl.StartReplication(ctx, d.conn, d.slotName, d.startLSN,
 		pglogrepl.StartReplicationOptions{
 			PluginArgs: []string{
@@ -78,7 +86,7 @@ func (d *Decoder) Start(ctx context.Context, startLSN pglogrepl.LSN) (<-chan Mes
 			},
 		})
 	if err != nil {
-		return nil, "", fmt.Errorf("start replication: %w", err)
+		return nil, fmt.Errorf("start replication: %w", err)
 	}
 
 	d.confirmedLSN = d.startLSN
@@ -88,6 +96,22 @@ func (d *Decoder) Start(ctx context.Context, startLSN pglogrepl.LSN) (<-chan Mes
 	ctx, d.cancel = context.WithCancel(ctx)
 	go d.receiveLoop(ctx, ch)
 
+	return ch, nil
+}
+
+// Start is a convenience that calls CreateSlot followed by StartStreaming.
+// WARNING: The snapshot returned is already invalid because StartStreaming
+// has been called. Use CreateSlot + StartStreaming separately when you need
+// to perform COPY using the snapshot.
+func (d *Decoder) Start(ctx context.Context, startLSN pglogrepl.LSN) (<-chan Message, string, error) {
+	snapshotName, err := d.CreateSlot(ctx, startLSN)
+	if err != nil {
+		return nil, "", err
+	}
+	ch, err := d.StartStreaming(ctx)
+	if err != nil {
+		return nil, "", err
+	}
 	return ch, snapshotName, nil
 }
 

@@ -2,8 +2,10 @@ package main
 
 import (
 	"github.com/jackc/pglogrepl"
+	"github.com/rs/zerolog"
 	"github.com/spf13/cobra"
 
+	"github.com/jfoltran/pgmigrator/internal/metrics"
 	"github.com/jfoltran/pgmigrator/internal/pipeline"
 	"github.com/jfoltran/pgmigrator/internal/server"
 	"github.com/jfoltran/pgmigrator/internal/tui"
@@ -38,6 +40,18 @@ The replication slot must already exist (created by a previous clone).`,
 		p := pipeline.New(&cfg, logger)
 		defer p.Close()
 
+		if followTUI || followAPIPort > 0 {
+			logWriter := metrics.NewLogWriter(p.Metrics)
+			var newLogger zerolog.Logger
+			if followTUI {
+				newLogger = zerolog.New(logWriter).With().Timestamp().Logger()
+			} else {
+				newLogger = zerolog.New(zerolog.MultiLevelWriter(logOutput, logWriter)).With().Timestamp().Logger()
+			}
+			newLogger = newLogger.Level(logger.GetLevel())
+			p.SetLogger(newLogger)
+		}
+
 		// Start API server if port is configured.
 		if followAPIPort > 0 {
 			srv := server.New(p.Metrics, &cfg, logger)
@@ -51,10 +65,7 @@ The replication slot must already exist (created by a previous clone).`,
 				errCh <- p.RunFollow(cmd.Context(), startLSN)
 			}()
 
-			if err := tui.Run(p.Metrics); err != nil {
-				return err
-			}
-			return <-errCh
+			return tui.Run(p.Metrics, errCh)
 		}
 
 		return p.RunFollow(cmd.Context(), startLSN)

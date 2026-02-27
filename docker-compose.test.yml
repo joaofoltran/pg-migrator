@@ -1,11 +1,12 @@
 services:
   source-pg:
-    image: postgres:16
+    image: postgres:18
     ports:
       - "5432:5432"
     environment:
       POSTGRES_DB: source
       POSTGRES_PASSWORD: source
+      PGDATA: /var/lib/postgresql/data
     command:
       - postgres
       - -c
@@ -21,12 +22,13 @@ services:
       retries: 10
 
   dest-pg:
-    image: postgres:16
+    image: postgres:18
     ports:
       - "5433:5432"
     environment:
       POSTGRES_DB: dest
       POSTGRES_PASSWORD: dest
+      PGDATA: /var/lib/postgresql/data
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U postgres"]
       interval: 2s

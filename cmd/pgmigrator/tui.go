@@ -30,7 +30,7 @@ pgmigrator instance. It connects to the API endpoint of a running pipeline.`,
 		defer cancel()
 		go pollRemote(ctx, tuiAPIAddr, collector)
 
-		return tui.Run(collector)
+		return tui.Run(collector, nil)
 	},
 }
 
