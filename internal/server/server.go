@@ -6,11 +6,14 @@ import (
 	"io/fs"
 	"net"
 	"net/http"
+	"strings"
 
 	"github.com/rs/zerolog"
 
-	"github.com/jfoltran/pgmigrator/internal/config"
-	"github.com/jfoltran/pgmigrator/internal/metrics"
+	"github.com/jfoltran/migrator/internal/cluster"
+	"github.com/jfoltran/migrator/internal/config"
+	"github.com/jfoltran/migrator/internal/daemon"
+	"github.com/jfoltran/migrator/internal/metrics"
 )
 
 // Server is the HTTP server that serves the REST API, WebSocket endpoint,
@@ -20,6 +23,8 @@ type Server struct {
 	cfg       *config.Config
 	logger    zerolog.Logger
 	hub       *Hub
+	jobs      *daemon.JobManager
+	clusters  *cluster.Store
 	srv       *http.Server
 }
 
@@ -32,6 +37,16 @@ func New(collector *metrics.Collector, cfg *config.Config, logger zerolog.Logger
 		logger:    logger.With().Str("component", "http-server").Logger(),
 		hub:       hub,
 	}
+}
+
+// SetJobManager attaches a job manager for daemon mode.
+func (s *Server) SetJobManager(jm *daemon.JobManager) {
+	s.jobs = jm
+}
+
+// SetClusterStore attaches a cluster store for multi-cluster management.
+func (s *Server) SetClusterStore(cs *cluster.Store) {
+	s.clusters = cs
 }
 
 // Start begins serving on the given port. It blocks until the context is cancelled.
@@ -47,12 +62,33 @@ func (s *Server) Start(ctx context.Context, port int) error {
 	mux.HandleFunc("GET /api/v1/logs", h.logs)
 	mux.HandleFunc("/api/v1/ws", s.hub.handleWS)
 
-	// Serve embedded frontend.
+	// Job control routes (daemon mode).
+	if s.jobs != nil {
+		jh := &jobHandlers{jobs: s.jobs}
+		mux.HandleFunc("POST /api/v1/jobs/clone", jh.submitClone)
+		mux.HandleFunc("POST /api/v1/jobs/follow", jh.submitFollow)
+		mux.HandleFunc("POST /api/v1/jobs/switchover", jh.submitSwitchover)
+		mux.HandleFunc("POST /api/v1/jobs/stop", jh.stopJob)
+		mux.HandleFunc("GET /api/v1/jobs/status", jh.jobStatus)
+	}
+
+	// Cluster management routes.
+	if s.clusters != nil {
+		ch := &clusterHandlers{store: s.clusters}
+		mux.HandleFunc("GET /api/v1/clusters", ch.list)
+		mux.HandleFunc("POST /api/v1/clusters", ch.add)
+		mux.HandleFunc("GET /api/v1/clusters/{id}", ch.get)
+		mux.HandleFunc("PUT /api/v1/clusters/{id}", ch.update)
+		mux.HandleFunc("DELETE /api/v1/clusters/{id}", ch.remove)
+		mux.HandleFunc("POST /api/v1/clusters/test-connection", ch.testConnection)
+	}
+
+	// Serve embedded frontend with SPA fallback.
 	sub, err := fs.Sub(distFS, "dist")
 	if err != nil {
 		return fmt.Errorf("embed fs: %w", err)
 	}
-	mux.Handle("/", http.FileServer(http.FS(sub)))
+	mux.Handle("/", spaHandler(http.FS(sub)))
 
 	s.srv = &http.Server{
 		Addr:    fmt.Sprintf(":%d", port),
@@ -90,4 +126,21 @@ func (s *Server) StartBackground(ctx context.Context, port int) {
 			s.logger.Err(err).Msg("http server error")
 		}
 	}()
+}
+
+func spaHandler(fsys http.FileSystem) http.Handler {
+	fileServer := http.FileServer(fsys)
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		path := r.URL.Path
+		if path != "/" && !strings.HasPrefix(path, "/api/") {
+			f, err := fsys.Open(path)
+			if err != nil {
+				r.URL.Path = "/"
+				fileServer.ServeHTTP(w, r)
+				return
+			}
+			f.Close()
+		}
+		fileServer.ServeHTTP(w, r)
+	})
 }

@@ -1,12 +1,12 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-# pgmigrator installer
-# Usage: curl -sSL https://raw.githubusercontent.com/jfoltran/pgmigrator/main/scripts/install.sh | bash
+# migrator installer
+# Usage: curl -sSL https://raw.githubusercontent.com/jfoltran/migrator/main/scripts/install.sh | bash
 
-REPO="jfoltran/pgmigrator"
+REPO="jfoltran/migrator"
 INSTALL_DIR="/usr/local/bin"
-BINARY="pgmigrator"
+BINARY="migrator"
 
 # Colors
 RED='\033[0;31m'
@@ -59,7 +59,7 @@ download() {
 }
 
 main() {
-    info "Installing pgmigrator..."
+    info "Installing migrator..."
 
     local os arch version
     os=$(detect_os)
@@ -120,7 +120,7 @@ main() {
     fi
     chmod +x "${INSTALL_DIR}/${BINARY}"
 
-    info "pgmigrator installed to ${INSTALL_DIR}/${BINARY}"
+    info "migrator installed to ${INSTALL_DIR}/${BINARY}"
     "${INSTALL_DIR}/${BINARY}" --help 2>/dev/null | head -3 || true
     echo ""
     info "Installation complete!"

@@ -14,11 +14,11 @@ COPY go.mod go.sum ./
 RUN go mod download
 COPY . .
 COPY --from=frontend /web/dist internal/server/dist/
-RUN CGO_ENABLED=0 go build -ldflags="-s -w" -o pgmigrator ./cmd/pgmigrator
+RUN CGO_ENABLED=0 go build -ldflags="-s -w" -o migrator ./cmd/migrator
 
 # Stage 3: Final image
 FROM alpine:3.19
 RUN apk add --no-cache ca-certificates postgresql-client
-COPY --from=backend /app/pgmigrator /usr/local/bin/pgmigrator
+COPY --from=backend /app/migrator /usr/local/bin/migrator
 EXPOSE 7654
-ENTRYPOINT ["pgmigrator"]
+ENTRYPOINT ["migrator"]

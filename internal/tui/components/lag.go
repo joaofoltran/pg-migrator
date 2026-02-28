@@ -6,7 +6,7 @@ import (
 
 	"github.com/charmbracelet/lipgloss"
 
-	"github.com/jfoltran/pgmigrator/internal/metrics"
+	"github.com/jfoltran/migrator/internal/metrics"
 )
 
 const sparklineChars = "▁▂▃▄▅▆▇█"

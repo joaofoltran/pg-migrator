@@ -4,7 +4,7 @@
 
 ## Overview
 
-pgmigrator provides multiple installation and deployment methods: a shell installer script for downloading pre-built binaries from GitHub releases, a multi-stage Dockerfile for containerized deployment, a docker-compose file for quick development/testing with source and destination databases, and Makefile targets for local development including frontend builds.
+migrator provides multiple installation and deployment methods: a shell installer script for downloading pre-built binaries from GitHub releases, a multi-stage Dockerfile for containerized deployment, a docker-compose file for quick development/testing with source and destination databases, and Makefile targets for local development including frontend builds.
 
 ---
 
@@ -14,7 +14,7 @@ pgmigrator provides multiple installation and deployment methods: a shell instal
 
 ```bash
 # Install latest version
-curl -sSL https://raw.githubusercontent.com/jfoltran/pgmigrator/main/scripts/install.sh | bash
+curl -sSL https://raw.githubusercontent.com/jfoltran/migrator/main/scripts/install.sh | bash
 
 # Install specific version
 PGMIGRATOR_VERSION=v1.0.0 bash scripts/install.sh
@@ -27,8 +27,8 @@ PGMIGRATOR_VERSION=v1.0.0 bash scripts/install.sh
 3. **Gets latest version** — Queries GitHub API for the latest release tag
 4. **Downloads binary** — Fetches the release tarball from GitHub
 5. **Verifies checksum** — Downloads `checksums.txt` and verifies SHA256
-6. **Installs** — Moves binary to `/usr/local/bin/pgmigrator`
-7. **Verifies** — Runs `pgmigrator --help` to confirm the binary works
+6. **Installs** — Moves binary to `/usr/local/bin/migrator`
+7. **Verifies** — Runs `migrator --help` to confirm the binary works
 
 ### Platform Detection
 
@@ -49,7 +49,7 @@ PGMIGRATOR_VERSION=v1.0.0 bash scripts/install.sh
 The version is determined by (in priority order):
 
 1. `PGMIGRATOR_VERSION` environment variable (if set)
-2. Latest release from GitHub API: `GET https://api.github.com/repos/jfoltran/pgmigrator/releases/latest`
+2. Latest release from GitHub API: `GET https://api.github.com/repos/jfoltran/migrator/releases/latest`
 
 The GitHub API response is parsed with `grep` and `sed` to extract the `tag_name` field. This avoids requiring `jq` as a dependency.
 
@@ -57,10 +57,10 @@ The GitHub API response is parsed with `grep` and `sed` to extract the `tag_name
 
 The expected asset name follows the pattern:
 ```
-pgmigrator_{version}_{os}_{arch}.tar.gz
+migrator_{version}_{os}_{arch}.tar.gz
 ```
 
-For example: `pgmigrator_1.0.0_linux_amd64.tar.gz`
+For example: `migrator_1.0.0_linux_amd64.tar.gz`
 
 The script supports both `curl` and `wget` — it uses whichever is available. If neither is found, it exits with an error.
 
@@ -79,7 +79,7 @@ The script checks if `/usr/local/bin` is writable:
 - **Writable:** Moves the binary directly
 - **Not writable:** Uses `sudo` to move the binary
 
-After installation, sets the executable permission (`chmod +x`) and runs `pgmigrator --help | head -3` to verify the binary works.
+After installation, sets the executable permission (`chmod +x`) and runs `migrator --help | head -3` to verify the binary works.
 
 ### Safety Features
 
@@ -125,7 +125,7 @@ COPY go.mod go.sum ./
 RUN go mod download
 COPY . .
 COPY --from=frontend /web/dist internal/server/dist/
-RUN CGO_ENABLED=0 go build -ldflags="-s -w" -o pgmigrator ./cmd/pgmigrator
+RUN CGO_ENABLED=0 go build -ldflags="-s -w" -o migrator ./cmd/migrator
 ```
 
 - `git` is needed for Go modules that reference git repositories
@@ -140,15 +140,15 @@ RUN CGO_ENABLED=0 go build -ldflags="-s -w" -o pgmigrator ./cmd/pgmigrator
 ```dockerfile
 FROM alpine:3.19
 RUN apk add --no-cache ca-certificates postgresql-client
-COPY --from=backend /app/pgmigrator /usr/local/bin/pgmigrator
+COPY --from=backend /app/migrator /usr/local/bin/migrator
 EXPOSE 7654
-ENTRYPOINT ["pgmigrator"]
+ENTRYPOINT ["migrator"]
 ```
 
 - **`ca-certificates`** — Required for HTTPS connections (e.g., if PostgreSQL uses SSL)
 - **`postgresql-client`** — Provides `pg_dump`, required by the schema package's `DumpSchema()` method
 - Exposes port 7654 for the Web UI/API server
-- `ENTRYPOINT` allows passing subcommands directly: `docker run pgmigrator clone --follow`
+- `ENTRYPOINT` allows passing subcommands directly: `docker run migrator clone --follow`
 
 ### Image Size
 
@@ -156,14 +156,14 @@ ENTRYPOINT ["pgmigrator"]
 |-------|-----------|------------------|
 | Frontend | node:20-alpine | ~180 MB (not in final) |
 | Backend | golang:1.23-alpine | ~350 MB (not in final) |
-| Runtime | alpine:3.19 | ~15 MB + pgmigrator binary (~15-20 MB) + postgresql-client (~10 MB) |
+| Runtime | alpine:3.19 | ~15 MB + migrator binary (~15-20 MB) + postgresql-client (~10 MB) |
 
 Final image: approximately **45-50 MB**.
 
 ### Build Command
 
 ```bash
-docker build -t pgmigrator .
+docker build -t migrator .
 # or
 make docker
 ```
@@ -172,12 +172,12 @@ make docker
 
 ```bash
 # Clone with streaming
-docker run --rm pgmigrator clone --follow \
+docker run --rm migrator clone --follow \
     --source-host=10.0.0.1 --source-dbname=prod \
     --dest-host=10.0.0.2 --dest-dbname=staging
 
 # With web UI
-docker run --rm -p 7654:7654 pgmigrator clone --follow --api-port=7654 \
+docker run --rm -p 7654:7654 migrator clone --follow --api-port=7654 \
     --source-host=10.0.0.1 --source-dbname=prod \
     --dest-host=10.0.0.2 --dest-dbname=staging
 ```
@@ -190,10 +190,10 @@ docker run --rm -p 7654:7654 pgmigrator clone --follow --api-port=7654 \
 
 A complete development/testing environment with three services:
 
-#### `pgmigrator`
+#### `migrator`
 
 ```yaml
-pgmigrator:
+migrator:
   build: .
   ports:
     - "7654:7654"
@@ -249,7 +249,7 @@ source-pg:
 - **`max_replication_slots=4`** — Allows up to 4 replication slots (default is 10, but explicitly set for clarity)
 - **`max_wal_senders=4`** — Allows up to 4 concurrent WAL sender processes
 
-The healthcheck uses `pg_isready` to verify PostgreSQL is accepting connections before pgmigrator starts.
+The healthcheck uses `pg_isready` to verify PostgreSQL is accepting connections before migrator starts.
 
 #### `dest-pg`
 
@@ -278,7 +278,7 @@ docker compose up
 docker compose up -d
 
 # View logs
-docker compose logs -f pgmigrator
+docker compose logs -f migrator
 
 # Open Web UI
 open http://localhost:7654
@@ -295,7 +295,7 @@ docker compose down -v
 
 | Target | Dependencies | Description |
 |--------|-------------|-------------|
-| `build` | — | Build Go binary → `./pgmigrator` |
+| `build` | — | Build Go binary → `./migrator` |
 | `test` | — | Run all Go tests with verbose output |
 | `lint` | — | Run `go vet` on all packages |
 | `clean` | — | Remove the binary |
@@ -303,7 +303,7 @@ docker compose down -v
 | `web-build` | `web-install` | Build frontend, copy to `internal/server/dist/` |
 | `web-dev` | — | Start Vite dev server for frontend development |
 | `build-full` | `web-build`, `build` | Build frontend then Go binary (production) |
-| `docker` | — | Build Docker image tagged `pgmigrator` |
+| `docker` | — | Build Docker image tagged `migrator` |
 | `install` | `build-full` | Build everything and copy to `/usr/local/bin/` |
 
 ### Common Workflows
@@ -324,7 +324,7 @@ make web-dev
 
 # Terminal 2: Build and run Go with API server
 make build
-./pgmigrator clone --follow --api-port=7654 ...
+./migrator clone --follow --api-port=7654 ...
 ```
 
 The Vite dev server (port 5173) proxies API requests to `:7654`, so the frontend hot-reloads while communicating with the real backend.
@@ -359,8 +359,8 @@ After this, `go build` embeds the production React app into the Go binary via `/
 ### Variables
 
 ```makefile
-BINARY := pgmigrator
-PKG := ./cmd/pgmigrator
+BINARY := migrator
+PKG := ./cmd/migrator
 ```
 
 All targets reference these variables for consistency.
@@ -373,10 +373,10 @@ All targets reference these variables for consistency.
 
 ```bash
 # Install
-curl -sSL https://raw.githubusercontent.com/jfoltran/pgmigrator/main/scripts/install.sh | bash
+curl -sSL https://raw.githubusercontent.com/jfoltran/migrator/main/scripts/install.sh | bash
 
 # Run migration
-pgmigrator clone --follow --api-port=7654 \
+migrator clone --follow --api-port=7654 \
     --source-host=source.db.internal --source-dbname=production \
     --dest-host=dest.db.internal --dest-dbname=production \
     --source-user=replication_user --source-password="$SOURCE_PW" \
@@ -385,16 +385,16 @@ pgmigrator clone --follow --api-port=7654 \
 # Monitor (separate terminal)
 open http://localhost:7654
 # or
-pgmigrator tui
+migrator tui
 ```
 
 ### Docker (Production)
 
 ```bash
-docker run -d --name pgmigrator \
+docker run -d --name migrator \
     -p 7654:7654 \
     --restart unless-stopped \
-    pgmigrator clone --follow --api-port=7654 \
+    migrator clone --follow --api-port=7654 \
     --source-host=source.db.internal --source-dbname=production \
     --dest-host=dest.db.internal --dest-dbname=production
 ```
@@ -405,14 +405,14 @@ docker run -d --name pgmigrator \
 apiVersion: apps/v1
 kind: Deployment
 metadata:
-  name: pgmigrator
+  name: migrator
 spec:
   replicas: 1  # Must be exactly 1 — replication slot is exclusive
   template:
     spec:
       containers:
-      - name: pgmigrator
-        image: pgmigrator:latest
+      - name: migrator
+        image: migrator:latest
         args:
           - clone
           - --follow
@@ -427,4 +427,4 @@ spec:
               key: source-password
 ```
 
-**Note:** pgmigrator must run as a single replica. Logical replication slots are exclusive — only one consumer can read from a slot at a time.
+**Note:** migrator must run as a single replica. Logical replication slots are exclusive — only one consumer can read from a slot at a time.

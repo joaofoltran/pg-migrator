@@ -1,11 +1,11 @@
 # Pipeline
 
-**Package:** `internal/pipeline`
+**Package:** `internal/migration/pipeline`
 **File:** `pipeline.go`
 
 ## Overview
 
-The pipeline is the central orchestrator of pgmigrator. It wires together all components — decoder, applier, copier, schema migrator, sentinel coordinator, and bidi filter — and manages the full migration lifecycle through a series of phases. It owns all database connections, coordinates parallel operations, and feeds the metrics collector with real-time progress data.
+The pipeline is the central orchestrator of migrator. It wires together all components — decoder, applier, copier, schema migrator, sentinel coordinator, and bidi filter — and manages the full migration lifecycle through a series of phases. It owns all database connections, coordinates parallel operations, and feeds the metrics collector with real-time progress data.
 
 ## Architecture
 
@@ -127,7 +127,7 @@ Creates all pipeline components using the established connections:
 
 ### `startPersister()`
 
-Initializes the `StatePersister` to write `~/.pgmigrator/state.json` every 2 seconds. Logs a warning and continues if state persistence fails (e.g., filesystem permission issues).
+Initializes the `StatePersister` to write `~/.migrator/state.json` every 2 seconds. Logs a warning and continues if state persistence fails (e.g., filesystem permission issues).
 
 ## Run Methods
 

@@ -1,5 +1,5 @@
 services:
-  pgmigrator:
+  migrator:
     build: .
     ports:
       - "7654:7654"

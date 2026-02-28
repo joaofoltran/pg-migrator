@@ -1,4 +1,4 @@
-module github.com/jfoltran/pgmigrator
+module github.com/jfoltran/migrator
 
 go 1.24.2
 

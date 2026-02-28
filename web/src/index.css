@@ -1,3 +1,29 @@
 @tailwind base;
 @tailwind components;
 @tailwind utilities;
+
+@layer base {
+  :root {
+    --color-bg: #0a0a0f;
+    --color-surface: #12121a;
+    --color-surface-hover: #1a1a25;
+    --color-border: #1e1e2e;
+    --color-border-subtle: #16161f;
+    --color-text: #e4e4ef;
+    --color-text-secondary: #8888a0;
+    --color-text-muted: #55556a;
+    --color-accent: #6366f1;
+    --color-accent-hover: #818cf8;
+  }
+
+  body {
+    @apply antialiased;
+    background-color: var(--color-bg);
+    color: var(--color-text);
+  }
+
+  * {
+    scrollbar-width: thin;
+    scrollbar-color: #2a2a3a transparent;
+  }
+}

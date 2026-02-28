@@ -8,8 +8,8 @@ import (
 
 	"github.com/rs/zerolog"
 
-	"github.com/jfoltran/pgmigrator/internal/config"
-	"github.com/jfoltran/pgmigrator/internal/metrics"
+	"github.com/jfoltran/migrator/internal/config"
+	"github.com/jfoltran/migrator/internal/metrics"
 )
 
 func TestHandlerStatus(t *testing.T) {

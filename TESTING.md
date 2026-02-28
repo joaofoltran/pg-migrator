@@ -1,10 +1,10 @@
 # Testing
 
-pgmigrator has three test tiers: **unit**, **integration**, and **benchmark**. Unit tests run without any external dependencies. Integration and benchmark tests require Docker or Podman to spin up PostgreSQL containers.
+migrator has three test tiers: **unit**, **integration**, and **benchmark**. Unit tests run without any external dependencies. Integration and benchmark tests require Docker or Podman to spin up PostgreSQL containers.
 
 ## Prerequisites
 
-- Go 1.23+
+- Go 1.24+
 - Docker **or** Podman (for integration/benchmark tests only)
 
 Container runtime detection order: `$CONTAINER_RUNTIME` env → `docker` on PATH → `podman` on PATH.
@@ -28,19 +28,20 @@ make test
 go test ./... -v
 ```
 
-Coverage spans 11 packages:
+Coverage spans 12 packages:
 
 | Package | What's tested |
 |---------|---------------|
-| `internal/bidi` | Loop-detection filter, origin matching, context cancellation |
+| `internal/cluster` | Store CRUD, node management, persistence, file permissions, validation |
+| `internal/migration/bidi` | Loop-detection filter, origin matching, context cancellation |
 | `internal/config` | DSN building, validation, defaults |
 | `internal/metrics` | Phase tracking, table lifecycle, log buffer, sliding window |
-| `internal/replay` | SQL generation (INSERT/UPDATE/DELETE parts, quoting) |
-| `internal/schema` | Statement splitting (incl. dollar-quoted PL/pgSQL), schema diff |
-| `internal/sentinel` | Sentinel message interface, coordinator initiate/confirm/timeout |
-| `internal/server` | HTTP handlers (status, tables, config, logs, CORS) |
-| `internal/snapshot` | Table info, identifier quoting |
-| `internal/stream` | Message types, kind/op stringers, origin extraction |
+| `internal/migration/replay` | SQL generation (INSERT/UPDATE/DELETE parts, quoting) |
+| `internal/migration/schema` | Statement splitting (incl. dollar-quoted PL/pgSQL), schema diff |
+| `internal/migration/sentinel` | Sentinel message interface, coordinator initiate/confirm/timeout |
+| `internal/server` | HTTP handlers (status, tables, config, logs, CORS), cluster CRUD API |
+| `internal/migration/snapshot` | Table info, identifier quoting |
+| `internal/migration/stream` | Message types, kind/op stringers, origin extraction |
 | `pkg/lsn` | Lag calculation, human-readable formatting |
 
 ## Integration Tests
@@ -64,7 +65,7 @@ make test-integration RUN=TestIntegration_CDCStreaming
 **Manual container management** (useful during development):
 ```bash
 docker compose -f docker-compose.test.yml up -d
-go test -tags=integration -v -count=1 -timeout=300s ./internal/pipeline/
+go test -tags=integration -v -count=1 -timeout=300s ./internal/migration/pipeline/
 docker compose -f docker-compose.test.yml down -v
 ```
 

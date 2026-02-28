@@ -1,26 +1,24 @@
-import { useMetrics } from "./hooks/useMetrics";
-import { Dashboard } from "./components/Dashboard";
+import { BrowserRouter, Routes, Route, Navigate } from "react-router-dom";
+import { Layout } from "./components/layout/Layout";
+import { ClustersPage } from "./pages/ClustersPage";
+import { MigrationPage } from "./pages/MigrationPage";
+import { BackupPage } from "./pages/BackupPage";
+import { StandbyPage } from "./pages/StandbyPage";
+import { SettingsPage } from "./pages/SettingsPage";
 
 export function App() {
-  const { snapshot, connected, history } = useMetrics();
-
-  if (!snapshot) {
-    return (
-      <div className="min-h-screen bg-gray-950 flex items-center justify-center">
-        <div className="text-center">
-          <h1 className="text-2xl font-bold text-purple-400 mb-2">
-            pgmigrator
-          </h1>
-          <p className="text-gray-500">Connecting to migration server...</p>
-          <div className="mt-4 animate-pulse">
-            <div className="w-8 h-8 border-2 border-purple-500 border-t-transparent rounded-full animate-spin mx-auto" />
-          </div>
-        </div>
-      </div>
-    );
-  }
-
   return (
-    <Dashboard snapshot={snapshot} connected={connected} history={history} />
+    <BrowserRouter>
+      <Routes>
+        <Route element={<Layout />}>
+          <Route path="/" element={<Navigate to="/clusters" replace />} />
+          <Route path="/clusters" element={<ClustersPage />} />
+          <Route path="/migration" element={<MigrationPage />} />
+          <Route path="/backup" element={<BackupPage />} />
+          <Route path="/standby" element={<StandbyPage />} />
+          <Route path="/settings" element={<SettingsPage />} />
+        </Route>
+      </Routes>
+    </BrowserRouter>
   );
 }

@@ -4,8 +4,8 @@ import (
 	"encoding/json"
 	"net/http"
 
-	"github.com/jfoltran/pgmigrator/internal/config"
-	"github.com/jfoltran/pgmigrator/internal/metrics"
+	"github.com/jfoltran/migrator/internal/config"
+	"github.com/jfoltran/migrator/internal/metrics"
 )
 
 type handlers struct {

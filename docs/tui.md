@@ -5,16 +5,16 @@
 
 ## Overview
 
-The TUI provides a real-time terminal dashboard for monitoring pgmigrator migrations. Built on [Bubble Tea](https://github.com/charmbracelet/bubbletea) (the Elm Architecture for Go terminals) with [Lipgloss](https://github.com/charmbracelet/lipgloss) styling, it renders a full-screen dashboard that updates every 500ms with live metrics from the pipeline.
+The TUI provides a real-time terminal dashboard for monitoring migrator migrations. Built on [Bubble Tea](https://github.com/charmbracelet/bubbletea) (the Elm Architecture for Go terminals) with [Lipgloss](https://github.com/charmbracelet/lipgloss) styling, it renders a full-screen dashboard that updates every 500ms with live metrics from the pipeline.
 
 The TUI can operate in two modes:
 1. **In-process** — Reads directly from the `metrics.Collector` via Go channels (zero network overhead)
-2. **Remote** — Polls a running pipeline's HTTP API (`pgmigrator tui --api-addr=http://host:port`)
+2. **Remote** — Polls a running pipeline's HTTP API (`migrator tui --api-addr=http://host:port`)
 
 ## Dashboard Layout
 
 ```
-┌─ pgmigrator ──────────────────────────────────────────┐
+┌─ migrator ──────────────────────────────────────────┐
 │  Phase: STREAMING    Elapsed: 1h 23m 45s              │
 │  Lag: 1.2 MB (150ms)    Throughput: 4,521 rows/s      │
 ├───────────────────────────────────────────────────────┤
@@ -88,7 +88,7 @@ The `waitForSnapshot` function returns a `tea.Cmd` that blocks on the subscripti
 
 The `View()` method composes all sections vertically:
 
-1. **Title bar** — Full-width purple background with "pgmigrator" text
+1. **Title bar** — Full-width purple background with "migrator" text
 2. **Header** — Phase, elapsed time, lag, and throughput summary
 3. **Progress** — Overall completion bar
 4. **Table list** — Per-table progress (height adapts to terminal size)
@@ -280,8 +280,8 @@ Renders the most recent log entries:
 ### In-Process Mode (`--tui` flag)
 
 ```bash
-pgmigrator clone --follow --tui
-pgmigrator follow --tui
+migrator clone --follow --tui
+migrator follow --tui
 ```
 
 When `--tui` is passed:
@@ -293,7 +293,7 @@ When `--tui` is passed:
 ### Remote Mode (`tui` command)
 
 ```bash
-pgmigrator tui --api-addr=http://production-host:7654
+migrator tui --api-addr=http://production-host:7654
 ```
 
 1. Creates a local `metrics.Collector` (not connected to any pipeline)

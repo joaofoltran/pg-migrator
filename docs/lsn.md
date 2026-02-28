@@ -7,7 +7,7 @@
 
 The lsn package provides public utility functions for working with PostgreSQL Log Sequence Numbers (LSNs). LSNs are the fundamental unit of replication progress — they identify specific positions in the Write-Ahead Log. This package calculates replication lag (the byte distance between two LSN positions) and formats it into human-readable strings for display in the TUI, Web UI, and CLI status output.
 
-This package lives under `pkg/` rather than `internal/` because it contains general-purpose LSN utilities that could be useful to external consumers of the pgmigrator module.
+This package lives under `pkg/` rather than `internal/` because it contains general-purpose LSN utilities that could be useful to external consumers of the migrator module.
 
 ## What is an LSN?
 
@@ -47,7 +47,7 @@ func Lag(current, latest pglogrepl.LSN) uint64 {
 **Usage in the pipeline:**
 
 ```go
-import "github.com/jfoltran/pgmigrator/pkg/lsn"
+import "github.com/jfoltran/migrator/pkg/lsn"
 
 lagBytes := lsn.Lag(applier.LastLSN(), decoder.LatestLSN())
 ```
@@ -113,7 +113,7 @@ The frontend receives `lag_bytes` and `lag_formatted` in the WebSocket snapshot 
 
 ### CLI Status
 
-The `pgmigrator status` command reads `LagFormatted` from the state file:
+The `migrator status` command reads `LagFormatted` from the state file:
 
 ```
 Lag:          12.50 MB (latency: 150ms)
@@ -123,18 +123,18 @@ Lag:          12.50 MB (latency: 150ms)
 
 ### Why Not Use `pg_stat_replication`?
 
-PostgreSQL provides `pg_stat_replication.sent_lsn` and `replay_lsn` for lag monitoring. However, pgmigrator calculates lag internally because:
+PostgreSQL provides `pg_stat_replication.sent_lsn` and `replay_lsn` for lag monitoring. However, migrator calculates lag internally because:
 
 1. **No extra queries** — Avoids polling `pg_stat_replication` on the source, which would add load
 2. **More accurate** — The internal calculation uses the exact LSN positions maintained by the decoder and applier
 3. **Works offline** — The state file preserves lag data even when the pipeline isn't connected
-4. **Consistent with architecture** — pgmigrator's zero-footprint design avoids unnecessary interactions with the source database
+4. **Consistent with architecture** — migrator's zero-footprint design avoids unnecessary interactions with the source database
 
 ### Why Public (`pkg/`) Instead of Internal?
 
 The LSN utility functions are:
 - Stateless and side-effect free
-- Useful independently of the rest of pgmigrator
+- Useful independently of the rest of migrator
 - Stable in their interface (unlikely to change)
 
 This makes them good candidates for a public package that could be imported by external tools or tests.

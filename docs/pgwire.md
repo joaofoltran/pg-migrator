@@ -1,6 +1,6 @@
 # PG Wire (Protocol Helpers)
 
-**Package:** `internal/pgwire`
+**Package:** `internal/migration/pgwire`
 **File:** `pgwire.go`
 
 ## Overview
@@ -73,9 +73,9 @@ Configures a replication origin on the connection for bidirectional loop detecti
 **Step 1: Create the origin (idempotent)**
 
 ```sql
-SELECT pg_replication_origin_create('pgmigrator-a')
+SELECT pg_replication_origin_create('migrator-a')
 WHERE NOT EXISTS (
-    SELECT 1 FROM pg_replication_origin WHERE roname = 'pgmigrator-a'
+    SELECT 1 FROM pg_replication_origin WHERE roname = 'migrator-a'
 )
 ```
 
@@ -84,7 +84,7 @@ The `WHERE NOT EXISTS` clause makes the creation idempotent — calling `SetRepl
 **Step 2: Attach the origin to the current session**
 
 ```sql
-SELECT pg_replication_origin_session_setup('pgmigrator-a')
+SELECT pg_replication_origin_session_setup('migrator-a')
 ```
 
 After this call, all writes made through this connection are tagged with the specified origin. When these writes appear in the WAL stream, they carry an `OriginMessage` with the origin name, which the `bidi.Filter` uses to detect and drop looped messages.
@@ -100,7 +100,7 @@ After this call, all writes made through this connection are tagged with the spe
 Drops a replication slot from the connected PostgreSQL instance:
 
 ```sql
-SELECT pg_drop_replication_slot('pgmigrator')
+SELECT pg_drop_replication_slot('migrator')
 ```
 
 This is used during cleanup — removing the slot when the migration is complete or when starting fresh. Dropping a replication slot releases the WAL segments it was holding, freeing disk space on the source server.
@@ -175,7 +175,7 @@ A replication origin is a PostgreSQL feature (since PG 9.5) that allows tagging 
 | Column | Type | Description |
 |--------|------|-------------|
 | `roident` | `oid` | Internal numeric ID |
-| `roname` | `text` | The origin name (e.g., `"pgmigrator-a"`) |
+| `roname` | `text` | The origin name (e.g., `"migrator-a"`) |
 
 ### How Origin Tagging Works
 
@@ -186,11 +186,11 @@ A replication origin is a PostgreSQL feature (since PG 9.5) that allows tagging 
 
 ### Session vs. Transaction Origins
 
-`pg_replication_origin_session_setup()` sets the origin for the entire session (connection lifetime), not per-transaction. This is more efficient than per-transaction origin setup and matches pgmigrator's connection model where the applier uses a dedicated pool.
+`pg_replication_origin_session_setup()` sets the origin for the entire session (connection lifetime), not per-transaction. This is more efficient than per-transaction origin setup and matches migrator's connection model where the applier uses a dedicated pool.
 
 ## Thread Safety
 
-The `Conn` wrapper is **not** thread-safe. It wraps a single `pgconn.PgConn` which is a stateful protocol connection. All calls to a `Conn` instance must be serialized by the caller. In pgmigrator, this is naturally enforced because:
+The `Conn` wrapper is **not** thread-safe. It wraps a single `pgconn.PgConn` which is a stateful protocol connection. All calls to a `Conn` instance must be serialized by the caller. In migrator, this is naturally enforced because:
 - The decoder uses one connection for the replication stream
 - The applier uses pool connections (one at a time per transaction)
 - Origin setup happens once during initialization, before concurrent operations begin

@@ -8,7 +8,7 @@ import (
 	"github.com/jackc/pglogrepl"
 	"github.com/rs/zerolog"
 
-	"github.com/jfoltran/pgmigrator/pkg/lsn"
+	"github.com/jfoltran/migrator/pkg/lsn"
 )
 
 // TableStatus represents the current state of a table in the migration.

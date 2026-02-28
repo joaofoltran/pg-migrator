@@ -1,26 +1,26 @@
 # Bidirectional Replication (Loop Detection)
 
-**Package:** `internal/bidi`
+**Package:** `internal/migration/bidi`
 **File:** `bidi.go`
 
 ## Overview
 
-The bidi package provides loop detection for bidirectional replication scenarios. When pgmigrator is used to replicate in both directions (A → B and B → A), changes applied to database B by the A→B pipeline would be picked up by B's WAL stream and sent back to A, creating an infinite loop. The `Filter` breaks this loop by dropping messages that originated from a known replication origin.
+The bidi package provides loop detection for bidirectional replication scenarios. When migrator is used to replicate in both directions (A → B and B → A), changes applied to database B by the A→B pipeline would be picked up by B's WAL stream and sent back to A, creating an infinite loop. The `Filter` breaks this loop by dropping messages that originated from a known replication origin.
 
 ## How Loop Detection Works
 
-PostgreSQL's replication origin feature (`pg_replication_origin`) allows tagging writes with an origin name. When pgmigrator applies changes to the destination, it tags those writes with an origin ID. The filter then drops any WAL messages that carry that same origin ID, because those messages are "echoes" of changes that pgmigrator itself applied.
+PostgreSQL's replication origin feature (`pg_replication_origin`) allows tagging writes with an origin name. When migrator applies changes to the destination, it tags those writes with an origin ID. The filter then drops any WAL messages that carry that same origin ID, because those messages are "echoes" of changes that migrator itself applied.
 
 ```
-Database A ──(WAL)──► Decoder A ──► Filter A (drops origin "pgmigrator-b") ──► Applier A ──► Database B
+Database A ──(WAL)──► Decoder A ──► Filter A (drops origin "migrator-b") ──► Applier A ──► Database B
                                                                                     │
                                                                               tags writes with
-                                                                              origin "pgmigrator-a"
+                                                                              origin "migrator-a"
 
-Database B ──(WAL)──► Decoder B ──► Filter B (drops origin "pgmigrator-a") ──► Applier B ──► Database A
+Database B ──(WAL)──► Decoder B ──► Filter B (drops origin "migrator-a") ──► Applier B ──► Database A
                                                                                     │
                                                                               tags writes with
-                                                                              origin "pgmigrator-b"
+                                                                              origin "migrator-b"
 ```
 
 ## Types
@@ -51,7 +51,7 @@ type Manager struct {
 ### Construction
 
 ```go
-filter := bidi.NewFilter("pgmigrator-origin", logger)
+filter := bidi.NewFilter("migrator-origin", logger)
 ```
 
 Creates a filter that will drop any message whose `OriginID()` matches the provided string.
@@ -144,12 +144,12 @@ When no `--origin-id` flag is provided, the filter is not created and the decode
 ## CLI Usage
 
 ```bash
-# A→B direction: tag writes with "pgmigrator-a", filter out "pgmigrator-b"
-pgmigrator follow --origin-id=pgmigrator-b \
+# A→B direction: tag writes with "migrator-a", filter out "migrator-b"
+migrator follow --origin-id=migrator-b \
     --source-host=db-a --dest-host=db-b
 
-# B→A direction: tag writes with "pgmigrator-b", filter out "pgmigrator-a"
-pgmigrator follow --origin-id=pgmigrator-a \
+# B→A direction: tag writes with "migrator-b", filter out "migrator-a"
+migrator follow --origin-id=migrator-a \
     --source-host=db-b --dest-host=db-a
 ```
 

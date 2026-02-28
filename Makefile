@@ -1,5 +1,5 @@
-BINARY := pgmigrator
-PKG := ./cmd/pgmigrator
+BINARY := migrator
+PKG := ./cmd/migrator
 
 .PHONY: build test test-integration test-benchmark test-stop setup-bench setup-bench-down lint clean web-install web-build web-dev build-full docker install
 
@@ -70,7 +70,7 @@ build-full: web-build build
 
 # Docker
 docker:
-	docker build -t pgmigrator .
+	docker build -t migrator .
 
 # Install to /usr/local/bin
 install: build-full

@@ -1,11 +1,11 @@
 # Snapshot (Parallel COPY)
 
-**Package:** `internal/snapshot`
+**Package:** `internal/migration/snapshot`
 **File:** `snapshot.go`
 
 ## Overview
 
-The snapshot package implements the initial data load phase of pgmigrator. It copies all tables from the source database to the destination using PostgreSQL's COPY protocol with parallel workers and consistent snapshots. This is the performance-critical path — for large databases, the COPY phase dominates total migration time.
+The snapshot package implements the initial data load phase of migrator. It copies all tables from the source database to the destination using PostgreSQL's COPY protocol with parallel workers and consistent snapshots. This is the performance-critical path — for large databases, the COPY phase dominates total migration time.
 
 ## Architecture
 

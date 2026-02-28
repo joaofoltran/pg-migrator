@@ -1,11 +1,11 @@
 # Stream (Message & Decoder)
 
-**Package:** `internal/stream`
+**Package:** `internal/migration/stream`
 **Files:** `message.go`, `decoder.go`
 
 ## Overview
 
-The stream package is the architectural spine of pgmigrator. It defines the unified `Message` interface through which all data flows — both real WAL changes and synthetic sentinels — and the `Decoder` that consumes the PostgreSQL logical replication stream and converts it into these messages.
+The stream package is the architectural spine of migrator. It defines the unified `Message` interface through which all data flows — both real WAL changes and synthetic sentinels — and the `Decoder` that consumes the PostgreSQL logical replication stream and converts it into these messages.
 
 This package implements the fundamental design decision: a single `chan Message` carries everything through the pipeline. There are no separate control channels, side bands, or out-of-band communication. This simplifies the architecture and makes the pipeline easy to reason about.
 
@@ -146,8 +146,8 @@ decoder := stream.NewDecoder(replConn, slotName, publication, logger)
 | Parameter    | Description                                         |
 |-------------|-----------------------------------------------------|
 | `replConn`  | Raw `pgconn.PgConn` with `replication=database`    |
-| `slotName`  | Replication slot name (e.g., `pgmigrator`)          |
-| `publication`| Publication name (e.g., `pgmigrator_pub`)          |
+| `slotName`  | Replication slot name (e.g., `migrator`)          |
+| `publication`| Publication name (e.g., `migrator_pub`)          |
 | `logger`    | zerolog logger, tagged with component `decoder`      |
 
 ### Starting

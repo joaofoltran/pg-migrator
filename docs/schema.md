@@ -1,6 +1,6 @@
 # Schema Management
 
-**Package:** `internal/schema`
+**Package:** `internal/migration/schema`
 **File:** `schema.go`
 
 ## Overview
