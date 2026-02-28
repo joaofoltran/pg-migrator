@@ -3,6 +3,7 @@ package stream
 import (
 	"context"
 	"fmt"
+	"strings"
 	"sync"
 	"time"
 
@@ -24,9 +25,14 @@ type Decoder struct {
 	relations map[uint32]*RelationMessage
 	origin    string // current origin from OriginMessage
 
-	mu            sync.Mutex
-	confirmedLSN  pglogrepl.LSN
+	pendingBegin   *BeginMessage
+	emptyTxSkipped int64
+
+	mu             sync.Mutex
+	confirmedLSN   pglogrepl.LSN
+	serverWALEnd   pglogrepl.LSN
 	lastStatusTime time.Time
+	loopErr        error
 
 	cancel context.CancelFunc
 	done   chan struct{}
@@ -37,7 +43,7 @@ func NewDecoder(conn *pgconn.PgConn, slotName, publication string, logger zerolo
 	return &Decoder{
 		conn:        conn,
 		logger:      logger.With().Str("component", "decoder").Logger(),
-		slotName:    slotName,
+		slotName:    strings.ReplaceAll(slotName, "-", "_"),
 		publication: publication,
 		relations:   make(map[uint32]*RelationMessage),
 		done:        make(chan struct{}),
@@ -55,8 +61,8 @@ func (d *Decoder) CreateSlot(ctx context.Context, startLSN pglogrepl.LSN) (strin
 		return "", nil
 	}
 
-	result, err := pglogrepl.CreateReplicationSlot(ctx, d.conn, d.slotName, "pgoutput",
-		pglogrepl.CreateReplicationSlotOptions{Temporary: false})
+	sql := fmt.Sprintf(`CREATE_REPLICATION_SLOT %s LOGICAL pgoutput (SNAPSHOT 'export')`, d.slotName)
+	result, err := pglogrepl.ParseCreateReplicationSlot(d.conn.Exec(ctx, sql))
 	if err != nil {
 		return "", fmt.Errorf("create replication slot: %w", err)
 	}
@@ -72,6 +78,11 @@ func (d *Decoder) CreateSlot(ctx context.Context, startLSN pglogrepl.LSN) (strin
 		Msg("created replication slot")
 
 	return result.SnapshotName, nil
+}
+
+// StartLSN returns the LSN that will be used when streaming begins.
+func (d *Decoder) StartLSN() pglogrepl.LSN {
+	return d.startLSN
 }
 
 // StartStreaming begins consuming WAL from the replication slot. This
@@ -92,7 +103,7 @@ func (d *Decoder) StartStreaming(ctx context.Context) (<-chan Message, error) {
 	d.confirmedLSN = d.startLSN
 	d.lastStatusTime = time.Now()
 
-	ch := make(chan Message, 256)
+	ch := make(chan Message, 4096)
 	ctx, d.cancel = context.WithCancel(ctx)
 	go d.receiveLoop(ctx, ch)
 
@@ -119,7 +130,16 @@ func (d *Decoder) receiveLoop(ctx context.Context, ch chan<- Message) {
 	defer close(ch)
 	defer close(d.done)
 
-	standbyInterval := 10 * time.Second
+	standbyInterval := 1 * time.Second
+	recvTimeout := 2 * time.Second
+	var msgCount int64
+	lastDiag := time.Now()
+
+	setErr := func(err error) {
+		d.mu.Lock()
+		d.loopErr = err
+		d.mu.Unlock()
+	}
 
 	for {
 		select {
@@ -128,33 +148,40 @@ func (d *Decoder) receiveLoop(ctx context.Context, ch chan<- Message) {
 		default:
 		}
 
-		// Send periodic standby status.
 		if time.Since(d.lastStatusTime) >= standbyInterval {
-			d.mu.Lock()
-			lsn := d.confirmedLSN
-			d.mu.Unlock()
-			if err := d.sendStandbyStatus(ctx, lsn); err != nil {
+			if err := d.sendStandbyStatus(ctx, d.effectiveLSN(ch)); err != nil {
 				d.logger.Err(err).Msg("failed to send standby status")
 			}
 		}
 
-		recvCtx, cancel := context.WithDeadline(ctx, time.Now().Add(standbyInterval))
+		recvCtx, cancel := context.WithDeadline(ctx, time.Now().Add(recvTimeout))
 		rawMsg, err := d.conn.ReceiveMessage(recvCtx)
 		cancel()
 		if err != nil {
 			if ctx.Err() != nil {
 				return
 			}
-			// Timeout is expected — loop around to send standby status.
 			if pgconn.Timeout(err) {
 				continue
 			}
 			d.logger.Err(err).Msg("receive message failed")
+			setErr(fmt.Errorf("receive message: %w", err))
 			return
 		}
 
 		if errResp, ok := rawMsg.(*pgproto3.ErrorResponse); ok {
-			d.logger.Error().Str("severity", errResp.Severity).Str("message", errResp.Message).Msg("server error")
+			d.logger.Error().
+				Str("severity", errResp.Severity).
+				Str("code", errResp.Code).
+				Str("message", errResp.Message).
+				Str("detail", errResp.Detail).
+				Str("hint", errResp.Hint).
+				Str("schema", errResp.SchemaName).
+				Str("table", errResp.TableName).
+				Str("column", errResp.ColumnName).
+				Str("where", errResp.Where).
+				Msg("server error from replication stream")
+			setErr(fmt.Errorf("server error: %s: %s (SQLSTATE %s)", errResp.Severity, errResp.Message, errResp.Code))
 			return
 		}
 
@@ -170,11 +197,14 @@ func (d *Decoder) receiveLoop(ctx context.Context, ch chan<- Message) {
 				d.logger.Err(err).Msg("parse keepalive")
 				continue
 			}
-			if pkm.ReplyRequested {
 				d.mu.Lock()
-				lsn := d.confirmedLSN
-				d.mu.Unlock()
-				if err := d.sendStandbyStatus(ctx, lsn); err != nil {
+			if pglogrepl.LSN(pkm.ServerWALEnd) > d.serverWALEnd {
+				d.serverWALEnd = pglogrepl.LSN(pkm.ServerWALEnd)
+			}
+			d.mu.Unlock()
+
+			if pkm.ReplyRequested {
+				if err := d.sendStandbyStatus(ctx, d.effectiveLSN(ch)); err != nil {
 					d.logger.Err(err).Msg("keepalive reply failed")
 				}
 			}
@@ -184,6 +214,28 @@ func (d *Decoder) receiveLoop(ctx context.Context, ch chan<- Message) {
 			if err != nil {
 				d.logger.Err(err).Msg("parse xlogdata")
 				continue
+			}
+
+			d.mu.Lock()
+			if pglogrepl.LSN(xld.ServerWALEnd) > d.serverWALEnd {
+				d.serverWALEnd = pglogrepl.LSN(xld.ServerWALEnd)
+			}
+			d.mu.Unlock()
+
+			msgCount++
+			if time.Since(lastDiag) >= 10*time.Second {
+				d.mu.Lock()
+				lsn := d.confirmedLSN
+				d.mu.Unlock()
+				d.logger.Info().
+					Int64("msgs", msgCount).
+					Int("ch_len", len(ch)).
+					Int("ch_cap", cap(ch)).
+					Stringer("wal_pos", pglogrepl.LSN(xld.WALStart)).
+					Stringer("confirmed", lsn).
+					Int64("empty_tx_skipped", d.emptyTxSkipped).
+					Msg("decoder throughput")
+				lastDiag = time.Now()
 			}
 			d.decodeWALData(ctx, ch, xld)
 		}
@@ -202,17 +254,22 @@ func (d *Decoder) decodeWALData(ctx context.Context, ch chan<- Message, xld pglo
 
 	switch msg := logicalMsg.(type) {
 	case *pglogrepl.BeginMessage:
-		d.emit(ctx, ch, &BeginMessage{
+		d.pendingBegin = &BeginMessage{
 			TxnLSN:  pglogrepl.LSN(msg.FinalLSN),
 			TxnTime: msg.CommitTime,
 			XID:     msg.Xid,
-		})
+		}
 
 	case *pglogrepl.CommitMessage:
-		d.emit(ctx, ch, &CommitMessage{
-			CommitLSN: pglogrepl.LSN(msg.CommitLSN),
-			TxnTime:   msg.CommitTime,
-		})
+		if d.pendingBegin != nil {
+			d.emptyTxSkipped++
+			d.pendingBegin = nil
+		} else {
+			d.emit(ctx, ch, &CommitMessage{
+				CommitLSN: pglogrepl.LSN(msg.CommitLSN),
+				TxnTime:   msg.CommitTime,
+			})
+		}
 
 	case *pglogrepl.RelationMessage:
 		cols := make([]Column, len(msg.Columns))
@@ -228,6 +285,7 @@ func (d *Decoder) decodeWALData(ctx context.Context, ch chan<- Message, xld pglo
 			MsgTime:   now,
 		}
 		d.relations[msg.RelationID] = rel
+		d.flushPendingBegin(ctx, ch)
 		d.emit(ctx, ch, rel)
 
 	case *pglogrepl.InsertMessage:
@@ -236,6 +294,7 @@ func (d *Decoder) decodeWALData(ctx context.Context, ch chan<- Message, xld pglo
 			d.logger.Warn().Uint32("relation_id", msg.RelationID).Msg("unknown relation for insert")
 			return
 		}
+		d.flushPendingBegin(ctx, ch)
 		d.emit(ctx, ch, &ChangeMessage{
 			Op:         OpInsert,
 			RelationID: msg.RelationID,
@@ -253,6 +312,7 @@ func (d *Decoder) decodeWALData(ctx context.Context, ch chan<- Message, xld pglo
 			d.logger.Warn().Uint32("relation_id", msg.RelationID).Msg("unknown relation for update")
 			return
 		}
+		d.flushPendingBegin(ctx, ch)
 		cm := &ChangeMessage{
 			Op:         OpUpdate,
 			RelationID: msg.RelationID,
@@ -274,6 +334,7 @@ func (d *Decoder) decodeWALData(ctx context.Context, ch chan<- Message, xld pglo
 			d.logger.Warn().Uint32("relation_id", msg.RelationID).Msg("unknown relation for delete")
 			return
 		}
+		d.flushPendingBegin(ctx, ch)
 		d.emit(ctx, ch, &ChangeMessage{
 			Op:         OpDelete,
 			RelationID: msg.RelationID,
@@ -287,6 +348,13 @@ func (d *Decoder) decodeWALData(ctx context.Context, ch chan<- Message, xld pglo
 
 	case *pglogrepl.OriginMessage:
 		d.origin = msg.Name
+	}
+}
+
+func (d *Decoder) flushPendingBegin(ctx context.Context, ch chan<- Message) {
+	if d.pendingBegin != nil {
+		d.emit(ctx, ch, d.pendingBegin)
+		d.pendingBegin = nil
 	}
 }
 
@@ -307,9 +375,37 @@ func decodeTuple(tuple *pglogrepl.TupleData, cols []Column) *TupleData {
 }
 
 func (d *Decoder) emit(ctx context.Context, ch chan<- Message, msg Message) {
-	select {
-	case ch <- msg:
-	case <-ctx.Done():
+	for {
+		select {
+		case ch <- msg:
+			return
+		case <-ctx.Done():
+			return
+		default:
+		}
+
+		// Channel is full. Send a standby heartbeat while waiting so the
+		// source doesn't time us out due to backpressure stalls.
+		if time.Since(d.lastStatusTime) >= 1*time.Second {
+			d.mu.Lock()
+			lsn := d.confirmedLSN
+			d.mu.Unlock()
+			if err := d.sendStandbyStatus(ctx, lsn); err != nil {
+				d.logger.Err(err).Msg("emit backpressure: standby status failed")
+			}
+		}
+
+		// Brief wait before retrying so we don't spin-lock.
+		t := time.NewTimer(100 * time.Millisecond)
+		select {
+		case ch <- msg:
+			t.Stop()
+			return
+		case <-t.C:
+		case <-ctx.Done():
+			t.Stop()
+			return
+		}
 	}
 }
 
@@ -321,6 +417,30 @@ func (d *Decoder) sendStandbyStatus(ctx context.Context, lsn pglogrepl.LSN) erro
 			WALFlushPosition: lsn,
 			WALApplyPosition: lsn,
 		})
+}
+
+// effectiveLSN returns the best LSN to report to the server. If the applier
+// channel is drained (we're caught up) and the server's WAL end is ahead of
+// the last confirmed applier LSN, report the server's position so the slot
+// doesn't fall behind during idle periods.
+func (d *Decoder) effectiveLSN(ch chan<- Message) pglogrepl.LSN {
+	d.mu.Lock()
+	confirmed := d.confirmedLSN
+	serverEnd := d.serverWALEnd
+	d.mu.Unlock()
+
+	if len(ch) == 0 && serverEnd > confirmed {
+		return serverEnd
+	}
+	return confirmed
+}
+
+// Err returns the error that caused the receive loop to exit, if any.
+// It is safe to call after the message channel has been closed.
+func (d *Decoder) Err() error {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	return d.loopErr
 }
 
 // ConfirmLSN advances the confirmed flush position for the replication slot.

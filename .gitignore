@@ -1,11 +1,57 @@
 # Go binary
-migrator
+pgmanager
 
-# Frontend build output (rebuilt from web/src)
+# Embedded SPA build output (rebuilt by make web-build / Dockerfile)
+internal/server/dist/
+
+# Frontend build output and dependencies
 web/dist/
 web/node_modules/
 
-# Frontend dev artifacts
+# Frontend dev/lock artifacts
 web/bun.lock
+web/bun.lockb
+web/package-lock.json
 web/src/vite-env.d.ts
 web/tsconfig.tsbuildinfo
+
+# Editor / AI tool directories
+.claude/
+.crush/
+CLAUDE.md
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# OS artifacts
+.DS_Store
+Thumbs.db
+
+# Logs
+*.log
+
+# Environment overrides
+.env
+.env.*
+
+# Go test/coverage artifacts
+coverage.out
+coverage.html
+*.test
+
+# Config file with real credentials (example is tracked)
+config.toml
+
+# Docker
+docker-compose.override.yml
+
+# Go debug binary
+__debug_bin*
+
+# Temporary files
+tmp/
+*.tmp

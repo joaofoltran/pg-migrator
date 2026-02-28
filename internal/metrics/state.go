@@ -10,12 +10,12 @@ import (
 )
 
 const (
-	stateDir  = ".migrator"
+	stateDir  = ".pgmanager"
 	stateFile = "state.json"
 )
 
 // StatePersister periodically writes the current Snapshot to a JSON file
-// so that `migrator status` can read it even when no pipeline is running.
+// so that `pgmanager status` can read it even when no pipeline is running.
 type StatePersister struct {
 	collector *Collector
 	logger    zerolog.Logger
@@ -23,7 +23,7 @@ type StatePersister struct {
 	done      chan struct{}
 }
 
-// NewStatePersister creates a persister that writes to ~/.migrator/state.json.
+// NewStatePersister creates a persister that writes to ~/.pgmanager/state.json.
 func NewStatePersister(collector *Collector, logger zerolog.Logger) (*StatePersister, error) {
 	home, err := os.UserHomeDir()
 	if err != nil {
@@ -92,7 +92,7 @@ func (sp *StatePersister) write() {
 	}
 }
 
-// ReadStateFile reads the last-persisted Snapshot from ~/.migrator/state.json.
+// ReadStateFile reads the last-persisted Snapshot from ~/.pgmanager/state.json.
 func ReadStateFile() (*Snapshot, error) {
 	home, err := os.UserHomeDir()
 	if err != nil {

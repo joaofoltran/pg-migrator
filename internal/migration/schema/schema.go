@@ -13,16 +13,16 @@ import (
 	"github.com/rs/zerolog"
 )
 
-// Migrator handles DDL operations between source and destination databases.
-type Migrator struct {
+// Manager handles DDL operations between source and destination databases.
+type Manager struct {
 	source *pgxpool.Pool
 	dest   *pgxpool.Pool
 	logger zerolog.Logger
 }
 
-// NewMigrator creates a schema Migrator.
-func NewMigrator(source, dest *pgxpool.Pool, logger zerolog.Logger) *Migrator {
-	return &Migrator{
+// NewMigrator creates a schema Manager.
+func NewManager(source, dest *pgxpool.Pool, logger zerolog.Logger) *Manager {
+	return &Manager{
 		source: source,
 		dest:   dest,
 		logger: logger.With().Str("component", "schema").Logger(),
@@ -30,7 +30,7 @@ func NewMigrator(source, dest *pgxpool.Pool, logger zerolog.Logger) *Migrator {
 }
 
 // DumpSchema returns the DDL for the source database using pg_dump --schema-only.
-func (m *Migrator) DumpSchema(ctx context.Context, dsn string) (string, error) {
+func (m *Manager) DumpSchema(ctx context.Context, dsn string) (string, error) {
 	cmd := exec.CommandContext(ctx, "pg_dump", "--schema-only", "--no-owner", "--no-privileges", dsn)
 	out, err := cmd.Output()
 	if err != nil {
@@ -45,7 +45,7 @@ func (m *Migrator) DumpSchema(ctx context.Context, dsn string) (string, error) {
 // ApplySchema applies the given DDL to the destination database.
 // It strips psql meta-commands (lines starting with \) and SQL comments
 // from pg_dump output, then executes each statement individually.
-func (m *Migrator) ApplySchema(ctx context.Context, ddl string) error {
+func (m *Manager) ApplySchema(ctx context.Context, ddl string) error {
 	stmts := splitStatements(ddl)
 	applied := 0
 	for i, stmt := range stmts {
@@ -203,7 +203,7 @@ func (d *SchemaDiff) HasDifferences() bool {
 }
 
 // CompareSchemas compares user table structures between source and destination.
-func (m *Migrator) CompareSchemas(ctx context.Context) (*SchemaDiff, error) {
+func (m *Manager) CompareSchemas(ctx context.Context) (*SchemaDiff, error) {
 	srcTables, err := m.listUserTables(ctx, m.source)
 	if err != nil {
 		return nil, fmt.Errorf("list source tables: %w", err)
@@ -281,7 +281,7 @@ type colInfo struct {
 	dataType string
 }
 
-func (m *Migrator) listUserTables(ctx context.Context, pool *pgxpool.Pool) ([]string, error) {
+func (m *Manager) listUserTables(ctx context.Context, pool *pgxpool.Pool) ([]string, error) {
 	rows, err := pool.Query(ctx, `
 		SELECT schemaname || '.' || tablename
 		FROM pg_tables
@@ -303,7 +303,7 @@ func (m *Migrator) listUserTables(ctx context.Context, pool *pgxpool.Pool) ([]st
 	return tables, rows.Err()
 }
 
-func (m *Migrator) listColumns(ctx context.Context, pool *pgxpool.Pool, qualifiedTable string) ([]colInfo, error) {
+func (m *Manager) listColumns(ctx context.Context, pool *pgxpool.Pool, qualifiedTable string) ([]colInfo, error) {
 	parts := strings.SplitN(qualifiedTable, ".", 2)
 	schema, table := parts[0], parts[1]
 

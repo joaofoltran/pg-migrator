@@ -4,7 +4,7 @@ import (
 	"encoding/json"
 	"net/http"
 
-	"github.com/jfoltran/migrator/internal/cluster"
+	"github.com/jfoltran/pgmanager/internal/cluster"
 )
 
 type clusterHandlers struct {
@@ -12,7 +12,12 @@ type clusterHandlers struct {
 }
 
 func (ch *clusterHandlers) list(w http.ResponseWriter, r *http.Request) {
-	writeJSON(w, ch.store.List())
+	clusters, err := ch.store.List(r.Context())
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	writeJSON(w, clusters)
 }
 
 func (ch *clusterHandlers) get(w http.ResponseWriter, r *http.Request) {
@@ -22,7 +27,11 @@ func (ch *clusterHandlers) get(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	c, ok := ch.store.Get(id)
+	c, ok, err := ch.store.Get(r.Context(), id)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
 	if !ok {
 		http.Error(w, "cluster not found", http.StatusNotFound)
 		return
@@ -31,10 +40,10 @@ func (ch *clusterHandlers) get(w http.ResponseWriter, r *http.Request) {
 }
 
 type addClusterRequest struct {
-	ID    string           `json:"id"`
-	Name  string           `json:"name"`
-	Nodes []cluster.Node   `json:"nodes"`
-	Tags  []string         `json:"tags,omitempty"`
+	ID    string         `json:"id"`
+	Name  string         `json:"name"`
+	Nodes []cluster.Node `json:"nodes"`
+	Tags  []string       `json:"tags,omitempty"`
 }
 
 func (ch *clusterHandlers) add(w http.ResponseWriter, r *http.Request) {
@@ -56,12 +65,12 @@ func (ch *clusterHandlers) add(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if err := ch.store.Add(c); err != nil {
+	if err := ch.store.Add(r.Context(), c); err != nil {
 		http.Error(w, err.Error(), http.StatusConflict)
 		return
 	}
 
-	got, _ := ch.store.Get(c.ID)
+	got, _, _ := ch.store.Get(r.Context(), c.ID)
 	w.WriteHeader(http.StatusCreated)
 	writeJSON(w, got)
 }
@@ -91,12 +100,12 @@ func (ch *clusterHandlers) update(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if err := ch.store.Update(c); err != nil {
+	if err := ch.store.Update(r.Context(), c); err != nil {
 		http.Error(w, err.Error(), http.StatusNotFound)
 		return
 	}
 
-	got, _ := ch.store.Get(id)
+	got, _, _ := ch.store.Get(r.Context(), id)
 	writeJSON(w, got)
 }
 
@@ -107,7 +116,7 @@ func (ch *clusterHandlers) remove(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if err := ch.store.Remove(id); err != nil {
+	if err := ch.store.Remove(r.Context(), id); err != nil {
 		http.Error(w, err.Error(), http.StatusNotFound)
 		return
 	}
@@ -131,3 +140,55 @@ func (ch *clusterHandlers) testConnection(w http.ResponseWriter, r *http.Request
 	writeJSON(w, result)
 }
 
+func (ch *clusterHandlers) introspect(w http.ResponseWriter, r *http.Request) {
+	id := r.PathValue("id")
+	nodeID := r.URL.Query().Get("node")
+
+	c, ok, err := ch.store.Get(r.Context(), id)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	if !ok {
+		http.Error(w, "cluster not found", http.StatusNotFound)
+		return
+	}
+
+	var node cluster.Node
+	if nodeID != "" {
+		found := false
+		for _, n := range c.Nodes {
+			if n.ID == nodeID {
+				node = n
+				found = true
+				break
+			}
+		}
+		if !found {
+			http.Error(w, "node not found", http.StatusNotFound)
+			return
+		}
+	} else {
+		for _, n := range c.Nodes {
+			if n.Role == cluster.RolePrimary {
+				node = n
+				break
+			}
+		}
+		if node.Host == "" && len(c.Nodes) > 0 {
+			node = c.Nodes[0]
+		}
+	}
+
+	if node.Host == "" {
+		http.Error(w, "no node available", http.StatusBadRequest)
+		return
+	}
+
+	info, err := cluster.Introspect(r.Context(), node.DSN())
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusBadGateway)
+		return
+	}
+	writeJSON(w, info)
+}

@@ -1,0 +1,14 @@
+# pgmanager configuration
+# Place this file at ~/.pgmanager/config.toml or /etc/pgmanager/config.toml
+# All values can be overridden via environment variables (PGMANAGER_*)
+
+[server]
+listen = "127.0.0.1"   # PGMANAGER_LISTEN — bind address
+port = 7654             # PGMANAGER_PORT   — HTTP port
+
+[database]
+url = "postgres://pgmanager:pgmanager@localhost:5432/pgmanager?sslmode=disable"  # PGMANAGER_DB_URL
+
+[logging]
+level = "info"          # PGMANAGER_LOG_LEVEL  — debug, info, warn, error
+format = "console"      # PGMANAGER_LOG_FORMAT — console, json

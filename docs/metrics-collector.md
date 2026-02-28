@@ -5,7 +5,7 @@
 
 ## Overview
 
-The metrics collector is the central observability layer for migrator. It aggregates real-time data from the pipeline — phase transitions, per-table copy progress, LSN positions, throughput rates, errors, and log entries — into a unified `Snapshot` struct. Both the HTTP API (including WebSocket) and the TUI consume this data through the same interface, ensuring a single source of truth for all monitoring surfaces.
+The metrics collector is the central observability layer for pgmanager. It aggregates real-time data from the pipeline — phase transitions, per-table copy progress, LSN positions, throughput rates, errors, and log entries — into a unified `Snapshot` struct. Both the HTTP API (including WebSocket) and the TUI consume this data through the same interface, ensuring a single source of truth for all monitoring surfaces.
 
 ## Architecture
 
@@ -14,8 +14,8 @@ Pipeline ──► Collector ──► Snapshot()  ──► HTTP handlers (REST
                 │                          WebSocket hub (push)
                 │                          TUI model (in-process)
                 │
-                └──► StatePersister ──► ~/.migrator/state.json
-                                        └──► `migrator status` (offline)
+                └──► StatePersister ──► ~/.pgmanager/state.json
+                                        └──► `pgmanager status` (offline)
 ```
 
 The collector is designed to be fully thread-safe. The pipeline writes to it from multiple goroutines (COPY workers, applier callback, phase transitions), while the HTTP server, WebSocket hub, and TUI read from it concurrently. All access is protected by a combination of `sync.RWMutex`, `sync.Mutex`, and `sync/atomic` operations chosen to minimize lock contention on hot paths.
@@ -174,7 +174,7 @@ The `slidingWindow` type maintains a time-ordered list of `(timestamp, value)` e
 
 ### Purpose
 
-The `StatePersister` bridges the gap between a running pipeline and the `migrator status` command. It periodically serializes the current `Snapshot` to `~/.migrator/state.json` so that status can be checked even when the pipeline is not running (e.g., after a crash or normal completion).
+The `StatePersister` bridges the gap between a running pipeline and the `pgmanager status` command. It periodically serializes the current `Snapshot` to `~/.pgmanager/state.json` so that status can be checked even when the pipeline is not running (e.g., after a crash or normal completion).
 
 ### Construction
 
@@ -184,7 +184,7 @@ persister.Start()
 defer persister.Stop()
 ```
 
-Creates the `~/.migrator/` directory if it doesn't exist (mode 0755).
+Creates the `~/.pgmanager/` directory if it doesn't exist (mode 0755).
 
 ### Write Strategy
 
@@ -223,13 +223,13 @@ Pretty-printed JSON (indented with 2 spaces) matching the `Snapshot` struct:
 snap, err := metrics.ReadStateFile()
 ```
 
-Reads and deserializes `~/.migrator/state.json`. Returns an error if the file doesn't exist (which the `status` command handles gracefully with a user-friendly message). The `status` command also checks the `Timestamp` field to detect staleness — if the state is older than 10 seconds, it warns the user.
+Reads and deserializes `~/.pgmanager/state.json`. Returns an error if the file doesn't exist (which the `status` command handles gracefully with a user-friendly message). The `status` command also checks the `Timestamp` field to detect staleness — if the state is older than 10 seconds, it warns the user.
 
 ### File Location
 
 | Platform | Path |
 |----------|------|
-| Linux    | `~/.migrator/state.json` |
-| macOS    | `~/.migrator/state.json` |
+| Linux    | `~/.pgmanager/state.json` |
+| macOS    | `~/.pgmanager/state.json` |
 
 The directory and file are created with standard permissions (0755 for directory, 0644 for file).

@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState, useCallback } from "react";
 import type { Snapshot } from "../types/metrics";
 import { WSConnection } from "../api/websocket";
+import { fetchStatus } from "../api/client";
 
 const MAX_HISTORY = 300;
 
@@ -26,6 +27,12 @@ export function useMetrics() {
   }, []);
 
   useEffect(() => {
+    fetchStatus()
+      .then((snap) => {
+        if (snap) setSnapshot(snap);
+      })
+      .catch(() => {});
+
     const ws = new WSConnection(onSnapshot, onStatus);
     wsRef.current = ws;
     return () => ws.close();

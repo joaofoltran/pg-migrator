@@ -5,7 +5,7 @@
 
 ## Overview
 
-The config package defines typed configuration structs for all migrator settings. It provides DSN builders that construct PostgreSQL connection strings from individual fields, and a validation method that checks for required fields and applies sensible defaults. Configuration flows from CLI flags into these structs via cobra's flag binding.
+The config package defines typed configuration structs for all pgmanager settings. It provides DSN builders that construct PostgreSQL connection strings from individual fields, and a validation method that checks for required fields and applies sensible defaults. Configuration flows from CLI flags into these structs via cobra's flag binding.
 
 ## Architecture
 
@@ -41,7 +41,7 @@ type Config struct {
 }
 ```
 
-This is the single configuration object passed to `pipeline.New()` and shared across all components. It is populated by cobra flag binding in `cmd/migrator/root.go`.
+This is the single configuration object passed to `pipeline.New()` and shared across all components. It is populated by cobra flag binding in `cm./pgmanager/root.go`.
 
 ### `DatabaseConfig`
 
@@ -115,8 +115,8 @@ Settings for the WAL replication stream:
 
 ```go
 type ReplicationConfig struct {
-    SlotName     string   // Replication slot name (default: "migrator")
-    Publication  string   // Publication name (default: "migrator_pub")
+    SlotName     string   // Replication slot name (default: "pgmanager")
+    Publication  string   // Publication name (default: "pgmanager_pub")
     OutputPlugin string   // Logical decoding plugin (default: "pgoutput")
     OriginID     string   // Replication origin ID for bidi (default: "" = disabled)
 }
@@ -124,14 +124,14 @@ type ReplicationConfig struct {
 
 | Field | CLI Flag | Default | Description |
 |-------|----------|---------|-------------|
-| `SlotName` | `--slot` | `migrator` | Name of the logical replication slot on the source |
-| `Publication` | `--publication` | `migrator_pub` | PostgreSQL publication that defines which tables to replicate |
+| `SlotName` | `--slot` | `pgmanager` | Name of the logical replication slot on the source |
+| `Publication` | `--publication` | `pgmanager_pub` | PostgreSQL publication that defines which tables to replicate |
 | `OutputPlugin` | `--output-plugin` | `pgoutput` | Logical decoding output plugin. Only `pgoutput` is supported |
 | `OriginID` | `--origin-id` | `""` (empty) | Replication origin name for bidirectional loop detection. When empty, bidi filtering is disabled |
 
 #### About `pgoutput`
 
-The `pgoutput` plugin is PostgreSQL's built-in logical decoding output plugin, available since PostgreSQL 10. It produces binary-encoded messages (RelationMessage, BeginMessage, InsertMessage, etc.) that map directly to migrator's `stream.Message` types. It's preferred over alternatives like `wal2json` because:
+The `pgoutput` plugin is PostgreSQL's built-in logical decoding output plugin, available since PostgreSQL 10. It produces binary-encoded messages (RelationMessage, BeginMessage, InsertMessage, etc.) that map directly to pgmanager's `stream.Message` types. It's preferred over alternatives like `wal2json` because:
 
 1. **Built-in** — No extension installation required
 2. **Binary protocol** — More efficient than JSON serialization/deserialization
@@ -216,7 +216,7 @@ Validation is called at the start of every command's `RunE` function, before any
 
 ## CLI Flag Binding
 
-The config struct is populated via cobra's persistent flags in `cmd/migrator/root.go`:
+The config struct is populated via cobra's persistent flags in `cm./pgmanager/root.go`:
 
 ```go
 var cfg config.Config
@@ -236,8 +236,8 @@ func init() {
     // ... same pattern ...
 
     // Replication
-    f.StringVar(&cfg.Replication.SlotName, "slot", "migrator", "...")
-    f.StringVar(&cfg.Replication.Publication, "publication", "migrator_pub", "...")
+    f.StringVar(&cfg.Replication.SlotName, "slot", "pgmanager", "...")
+    f.StringVar(&cfg.Replication.Publication, "publication", "pgmanager_pub", "...")
     f.StringVar(&cfg.Replication.OutputPlugin, "output-plugin", "pgoutput", "...")
     f.StringVar(&cfg.Replication.OriginID, "origin-id", "", "...")
 

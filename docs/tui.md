@@ -9,12 +9,12 @@ The TUI provides a real-time terminal dashboard for monitoring migrator migratio
 
 The TUI can operate in two modes:
 1. **In-process** — Reads directly from the `metrics.Collector` via Go channels (zero network overhead)
-2. **Remote** — Polls a running pipeline's HTTP API (`migrator tui --api-addr=http://host:port`)
+2. **Remote** — Polls a running pipeline's HTTP API (`pgmanager tui --api-addr=http://host:port`)
 
 ## Dashboard Layout
 
 ```
-┌─ migrator ──────────────────────────────────────────┐
+┌─ pgmanager ──────────────────────────────────────────┐
 │  Phase: STREAMING    Elapsed: 1h 23m 45s              │
 │  Lag: 1.2 MB (150ms)    Throughput: 4,521 rows/s      │
 ├───────────────────────────────────────────────────────┤
@@ -88,7 +88,7 @@ The `waitForSnapshot` function returns a `tea.Cmd` that blocks on the subscripti
 
 The `View()` method composes all sections vertically:
 
-1. **Title bar** — Full-width purple background with "migrator" text
+1. **Title bar** — Full-width purple background with "pgmanager" text
 2. **Header** — Phase, elapsed time, lag, and throughput summary
 3. **Progress** — Overall completion bar
 4. **Table list** — Per-table progress (height adapts to terminal size)
@@ -280,8 +280,8 @@ Renders the most recent log entries:
 ### In-Process Mode (`--tui` flag)
 
 ```bash
-migrator clone --follow --tui
-migrator follow --tui
+pgmanager clone --follow --tui
+pgmanager follow --tui
 ```
 
 When `--tui` is passed:
@@ -293,7 +293,7 @@ When `--tui` is passed:
 ### Remote Mode (`tui` command)
 
 ```bash
-migrator tui --api-addr=http://production-host:7654
+pgmanager tui --api-addr=http://production-host:7654
 ```
 
 1. Creates a local `metrics.Collector` (not connected to any pipeline)

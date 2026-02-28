@@ -5,9 +5,9 @@
 
 ## Overview
 
-The cluster package provides multi-cluster management for migrator. It handles registration, storage, and validation of PostgreSQL clusters and their nodes, plus connectivity testing with privilege-level detection.
+The cluster package provides multi-cluster management for pgmanager. It handles registration, storage, and validation of PostgreSQL clusters and their nodes, plus connectivity testing with privilege-level detection.
 
-Clusters are stored in a JSON file at `~/.migrator/clusters.json` with `0600` permissions (security-first: only the owning user can read the file).
+Clusters are stored in a JSON file at `~/.pgmanager/clusters.json` with `0600` permissions (security-first: only the owning user can read the file).
 
 ## Data Model
 
@@ -57,7 +57,7 @@ Thread-safe JSON file store with atomic writes (write to `.tmp`, then rename).
 store, err := cluster.NewStore()
 ```
 
-Creates or opens `~/.migrator/clusters.json`. Returns an error if the file exists but can't be parsed (not if it doesn't exist — that's a fresh store).
+Creates or opens `~/.pgmanager/clusters.json`. Returns an error if the file exists but can't be parsed (not if it doesn't exist — that's a fresh store).
 
 ### Operations
 
@@ -149,14 +149,14 @@ Uses Go 1.22+ path parameters (`{id}`) via `r.PathValue("id")`.
 
 ## CLI Integration
 
-The `migrator cluster` command group provides:
+The `pgmanager cluster` command group provides:
 
 ```bash
-migrator cluster add --id prod --name "Production" --node primary:10.0.0.1:5432
-migrator cluster list [--json]
-migrator cluster show prod [--json]
-migrator cluster remove prod
-migrator cluster test prod --user postgres --password secret --dbname postgres
+pgmanager cluster add --id prod --name "Production" --node primary:10.0.0.1:5432
+pgmanager cluster list [--json]
+pgmanager cluster show prod [--json]
+pgmanager cluster remove prod
+pgmanager cluster test prod --user postgres --password secret --dbname postgres
 ```
 
 Node specs use the format `role:host:port` where role is `primary`, `replica`, or `standby`.

@@ -1,5 +1,6 @@
 import type { Snapshot, LogEntry } from "../types/metrics";
-import type { Cluster, ConnTestResult } from "../types/cluster";
+import type { Cluster, ConnTestResult, ClusterInfo } from "../types/cluster";
+import type { Migration, CreateMigrationRequest } from "../types/migration";
 
 const BASE = "";
 
@@ -18,19 +19,36 @@ export async function fetchLogs(): Promise<LogEntry[]> {
   return res.json();
 }
 
-export async function submitClone(): Promise<void> {
-  const res = await fetch(`${BASE}/api/v1/jobs/clone`, { method: "POST" });
+export async function submitClone(payload?: {
+  source_uri?: string;
+  dest_uri?: string;
+  follow?: boolean;
+  workers?: number;
+}): Promise<void> {
+  const res = await fetch(`${BASE}/api/v1/jobs/clone`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(payload || {}),
+  });
   if (!res.ok) {
-    const body = await res.text();
-    throw new Error(body || `HTTP ${res.status}`);
+    const body = await res.json().catch(() => ({ error: `HTTP ${res.status}` }));
+    throw new Error(body.error || `HTTP ${res.status}`);
   }
 }
 
-export async function submitFollow(): Promise<void> {
-  const res = await fetch(`${BASE}/api/v1/jobs/follow`, { method: "POST" });
+export async function submitFollow(payload?: {
+  source_uri?: string;
+  dest_uri?: string;
+  start_lsn?: string;
+}): Promise<void> {
+  const res = await fetch(`${BASE}/api/v1/jobs/follow`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(payload || {}),
+  });
   if (!res.ok) {
-    const body = await res.text();
-    throw new Error(body || `HTTP ${res.status}`);
+    const body = await res.json().catch(() => ({ error: `HTTP ${res.status}` }));
+    throw new Error(body.error || `HTTP ${res.status}`);
   }
 }
 
@@ -104,4 +122,86 @@ export async function testConnection(dsn: string): Promise<ConnTestResult> {
     body: JSON.stringify({ dsn }),
   });
   return res.json();
+}
+
+export async function introspectCluster(
+  id: string,
+  nodeId?: string
+): Promise<ClusterInfo> {
+  const params = nodeId ? `?node=${encodeURIComponent(nodeId)}` : "";
+  const res = await fetch(
+    `${BASE}/api/v1/clusters/${encodeURIComponent(id)}/introspect${params}`
+  );
+  if (!res.ok) {
+    const body = await res.text();
+    throw new Error(body || `HTTP ${res.status}`);
+  }
+  return res.json();
+}
+
+// --- Migrations ---
+
+export async function fetchMigrations(): Promise<Migration[]> {
+  const res = await fetch(`${BASE}/api/v1/migrations`);
+  return res.json();
+}
+
+export async function fetchMigration(id: string): Promise<Migration> {
+  const res = await fetch(`${BASE}/api/v1/migrations/${encodeURIComponent(id)}`);
+  if (!res.ok) throw new Error(`HTTP ${res.status}`);
+  return res.json();
+}
+
+export async function createMigration(req: CreateMigrationRequest): Promise<Migration> {
+  const res = await fetch(`${BASE}/api/v1/migrations`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(req),
+  });
+  if (!res.ok) {
+    const body = await res.text();
+    throw new Error(body || `HTTP ${res.status}`);
+  }
+  return res.json();
+}
+
+export async function removeMigration(id: string, force?: boolean): Promise<void> {
+  const params = force ? "?force=true" : "";
+  const res = await fetch(`${BASE}/api/v1/migrations/${encodeURIComponent(id)}${params}`, {
+    method: "DELETE",
+  });
+  if (!res.ok) {
+    const body = await res.text();
+    throw new Error(body || `HTTP ${res.status}`);
+  }
+}
+
+export async function startMigration(id: string): Promise<void> {
+  const res = await fetch(`${BASE}/api/v1/migrations/${encodeURIComponent(id)}/start`, {
+    method: "POST",
+  });
+  if (!res.ok) {
+    const body = await res.text();
+    throw new Error(body || `HTTP ${res.status}`);
+  }
+}
+
+export async function stopMigration(id: string): Promise<void> {
+  const res = await fetch(`${BASE}/api/v1/migrations/${encodeURIComponent(id)}/stop`, {
+    method: "POST",
+  });
+  if (!res.ok) {
+    const body = await res.text();
+    throw new Error(body || `HTTP ${res.status}`);
+  }
+}
+
+export async function switchoverMigration(id: string): Promise<void> {
+  const res = await fetch(`${BASE}/api/v1/migrations/${encodeURIComponent(id)}/switchover`, {
+    method: "POST",
+  });
+  if (!res.ok) {
+    const body = await res.text();
+    throw new Error(body || `HTTP ${res.status}`);
+  }
 }

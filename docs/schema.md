@@ -58,7 +58,7 @@ type ColumnDiff struct {
 ## Construction
 
 ```go
-migrator := schema.NewMigrator(srcPool, dstPool, logger)
+pgmanager := schema.NewManager(srcPool, dstPool, logger)
 ```
 
 ## Schema Dump

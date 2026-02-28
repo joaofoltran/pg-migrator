@@ -1,16 +1,16 @@
 # CLI Commands
 
-**Package:** `cmd/migrator`
+**Package:** `cm./pgmanager`
 **Files:** `main.go`, `root.go`, `clone.go`, `follow.go`, `switchover.go`, `status.go`, `compare.go`, `serve.go`, `daemon.go`, `logs.go`, `cluster.go`, `tui.go`
 
 ## Overview
 
-migrator uses [cobra](https://github.com/spf13/cobra) for its CLI framework. The root command defines global persistent flags (database connections, replication settings, logging), and each subcommand implements a specific operation. All commands share the same `config.Config` struct and `zerolog.Logger`, initialized in the root command's `PersistentPreRunE`.
+pgmanager uses [cobra](https://github.com/spf13/cobra) for its CLI framework. The root command defines global persistent flags (database connections, replication settings, logging), and each subcommand implements a specific operation. All commands share the same `config.Config` struct and `zerolog.Logger`, initialized in the root command's `PersistentPreRunE`.
 
 ## Command Tree
 
 ```
-migrator
+pgmanager
 ├── daemon
 │   ├── start       Launch the background daemon (API + Web UI)
 │   ├── stop        Stop the daemon
@@ -92,8 +92,8 @@ All flags are **persistent** (inherited by all subcommands):
 
 | Flag | Default | Description |
 |------|---------|-------------|
-| `--slot` | `migrator` | Replication slot name |
-| `--publication` | `migrator_pub` | Publication name |
+| `--slot` | `pgmanager` | Replication slot name |
+| `--publication` | `pgmanager_pub` | Publication name |
 | `--output-plugin` | `pgoutput` | Logical decoding output plugin |
 | `--origin-id` | `""` | Replication origin ID for bidi loop detection |
 
@@ -116,7 +116,7 @@ All flags are **persistent** (inherited by all subcommands):
 
 ### `daemon start`
 
-Launches the migrator daemon as a background process. The daemon serves the HTTP API, Web UI, and accepts pipeline jobs via the API. Cluster management routes are also registered.
+Launches the pgmanager daemon as a background process. The daemon serves the HTTP API, Web UI, and accepts pipeline jobs via the API. Cluster management routes are also registered.
 
 **Flags:**
 
@@ -128,7 +128,7 @@ Launches the migrator daemon as a background process. The daemon serves the HTTP
 **Behavior:**
 
 1. If not `--foreground`, checks for existing daemon via PID file
-2. Re-execs the binary with `_MIGRATOR_DAEMON=1` env and `Setsid: true`
+2. Re-execs the binary with `_PGMANAGER_DAEMON=1` env and `Setsid: true`
 3. In daemon mode: writes PID, initializes logger, creates metrics collector, job manager, cluster store, and HTTP server
 4. Registers all routes: status/tables/config/logs, WebSocket, job control, cluster CRUD
 5. Blocks on signal (SIGTERM/SIGINT) for graceful shutdown
@@ -136,9 +136,9 @@ Launches the migrator daemon as a background process. The daemon serves the HTTP
 **Examples:**
 
 ```bash
-migrator daemon start                     # Background daemon
-migrator daemon start --foreground        # Foreground (containers)
-migrator daemon start --port 8080         # Custom port
+pgmanager daemon start                     # Background daemon
+pgmanager daemon start --foreground        # Foreground (containers)
+pgmanager daemon start --port 8080         # Custom port
 ```
 
 ### `daemon stop`
@@ -172,11 +172,11 @@ Register a new PostgreSQL cluster by providing connection details for its nodes.
 
 ```bash
 # Single-node cluster
-migrator cluster add --id prod --name "Production" \
+pgmanager cluster add --id prod --name "Production" \
     --node primary:10.0.0.1:5432
 
 # Multi-node cluster with tags
-migrator cluster add --id staging --name "Staging" \
+pgmanager cluster add --id staging --name "Staging" \
     --node primary:pg-staging.local:5432 \
     --node replica:pg-replica.local:5432 \
     --tag env:staging --tag region:us-east
@@ -265,7 +265,7 @@ Testing 2 node(s) in cluster "prod"...
 ### Usage
 
 ```bash
-migrator clone [flags]
+pgmanager clone [flags]
 ```
 
 ### Description
@@ -304,22 +304,22 @@ When a clone is interrupted, `--resume` recovers without data loss:
 
 ```bash
 # Clone with continuous streaming (daemon mode)
-migrator clone --follow \
+pgmanager clone --follow \
     --source-uri="postgres://user:pass@source:5432/prod" \
     --dest-uri="postgres://user:pass@dest:5432/prod"
 
 # Clone with 8 parallel workers
-migrator clone --follow --copy-workers=8 \
+pgmanager clone --follow --copy-workers=8 \
     --source-uri="postgres://user:pass@source:5432/prod" \
     --dest-uri="postgres://user:pass@dest:5432/prod"
 
 # Resume an interrupted clone
-migrator clone --follow --resume \
+pgmanager clone --follow --resume \
     --source-uri="postgres://user:pass@source:5432/prod" \
     --dest-uri="postgres://user:pass@dest:5432/prod"
 
 # Foreground with TUI
-migrator clone --follow --foreground --tui \
+pgmanager clone --follow --foreground --tui \
     --source-dbname=prod --dest-dbname=staging
 ```
 
@@ -330,7 +330,7 @@ migrator clone --follow --foreground --tui \
 ### Usage
 
 ```bash
-migrator follow [flags]
+pgmanager follow [flags]
 ```
 
 ### Description
@@ -349,12 +349,12 @@ Starts consuming the WAL stream from an existing replication slot and applies ch
 
 ```bash
 # Resume streaming (daemon mode)
-migrator follow \
+pgmanager follow \
     --source-uri="postgres://user:pass@source:5432/prod" \
     --dest-uri="postgres://user:pass@dest:5432/prod"
 
 # Stream from a specific LSN
-migrator follow --start-lsn=0/1A3B4C5 \
+pgmanager follow --start-lsn=0/1A3B4C5 \
     --source-uri="postgres://user:pass@source:5432/prod" \
     --dest-uri="postgres://user:pass@dest:5432/prod"
 ```
@@ -366,7 +366,7 @@ migrator follow --start-lsn=0/1A3B4C5 \
 ### Usage
 
 ```bash
-migrator switchover [flags]
+pgmanager switchover [flags]
 ```
 
 ### Description
@@ -383,7 +383,7 @@ Injects a sentinel message into the replication stream and waits for confirmatio
 ### Examples
 
 ```bash
-migrator switchover --timeout=30s \
+pgmanager switchover --timeout=30s \
     --source-uri="postgres://user:pass@source:5432/prod" \
     --dest-uri="postgres://user:pass@dest:5432/prod"
 ```
@@ -395,12 +395,12 @@ migrator switchover --timeout=30s \
 ### Usage
 
 ```bash
-migrator status
+pgmanager status
 ```
 
 ### Description
 
-Queries the daemon API first (`GET /api/v1/status`). If the daemon is not running, falls back to reading the persisted state file at `~/.migrator/state.json`.
+Queries the daemon API first (`GET /api/v1/status`). If the daemon is not running, falls back to reading the persisted state file at `~/.pgmanager/state.json`.
 
 ### Output Format
 
@@ -427,7 +427,7 @@ Tables:
 ### Usage
 
 ```bash
-migrator logs [flags]
+pgmanager logs [flags]
 ```
 
 ### Flags
@@ -438,7 +438,7 @@ migrator logs [flags]
 
 ### Description
 
-Tails the daemon log file at `~/.migrator/migrator.log`. With `--follow`, polls for new entries continuously.
+Tails the daemon log file at `~/.pgmanager/pgmanager.log`. With `--follow`, polls for new entries continuously.
 
 ---
 
@@ -447,14 +447,14 @@ Tails the daemon log file at `~/.migrator/migrator.log`. With `--follow`, polls 
 ### Usage
 
 ```bash
-migrator tui [flags]
+pgmanager tui [flags]
 ```
 
 ### Flags
 
 | Flag | Default | Description |
 |------|---------|-------------|
-| `--api-addr` | `http://localhost:7654` | Address of the migrator API |
+| `--api-addr` | `http://localhost:7654` | Address of the pgmanager API |
 
 ### Description
 
@@ -463,8 +463,8 @@ Launches a Bubble Tea terminal dashboard that connects to the daemon's HTTP API.
 ### Examples
 
 ```bash
-migrator tui                                    # Monitor local daemon
-migrator tui --api-addr=http://10.0.0.5:7654    # Monitor remote daemon
+pgmanager tui                                    # Monitor local daemon
+pgmanager tui --api-addr=http://10.0.0.5:7654    # Monitor remote daemon
 ```
 
 ---

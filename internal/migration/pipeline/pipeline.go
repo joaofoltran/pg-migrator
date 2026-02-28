@@ -7,18 +7,19 @@ import (
 	"time"
 
 	"github.com/jackc/pglogrepl"
+	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/rs/zerolog"
 
-	"github.com/jfoltran/migrator/internal/migration/bidi"
-	"github.com/jfoltran/migrator/internal/config"
-	"github.com/jfoltran/migrator/internal/metrics"
-	"github.com/jfoltran/migrator/internal/migration/replay"
-	"github.com/jfoltran/migrator/internal/migration/schema"
-	"github.com/jfoltran/migrator/internal/migration/sentinel"
-	"github.com/jfoltran/migrator/internal/migration/snapshot"
-	"github.com/jfoltran/migrator/internal/migration/stream"
+	"github.com/jfoltran/pgmanager/internal/migration/bidi"
+	"github.com/jfoltran/pgmanager/internal/config"
+	"github.com/jfoltran/pgmanager/internal/metrics"
+	"github.com/jfoltran/pgmanager/internal/migration/replay"
+	"github.com/jfoltran/pgmanager/internal/migration/schema"
+	"github.com/jfoltran/pgmanager/internal/migration/sentinel"
+	"github.com/jfoltran/pgmanager/internal/migration/snapshot"
+	"github.com/jfoltran/pgmanager/internal/migration/stream"
 )
 
 // Progress reports the current state of the pipeline.
@@ -45,7 +46,7 @@ type Pipeline struct {
 	decoder     *stream.Decoder
 	applier     *replay.Applier
 	copier      *snapshot.Copier
-	schemaMgr   *schema.Migrator
+	schemaMgr   *schema.Manager
 	coordinator *sentinel.Coordinator
 	bidiFilter  *bidi.Filter
 
@@ -108,7 +109,15 @@ func (p *Pipeline) connect(ctx context.Context) error {
 	p.srcPool = srcPool
 
 	p.logger.Info().Str("host", p.cfg.Dest.Host).Uint16("port", p.cfg.Dest.Port).Str("db", p.cfg.Dest.DBName).Msg("connecting to destination (pool)")
-	dstPool, err := pgxpool.New(ctx, p.cfg.Dest.DSN())
+	dstCfg, err := pgxpool.ParseConfig(p.cfg.Dest.DSN())
+	if err != nil {
+		return fmt.Errorf("parse dest pool config: %w", err)
+	}
+	dstCfg.AfterConnect = func(ctx context.Context, conn *pgx.Conn) error {
+		_, err := conn.Exec(ctx, "SET session_replication_role = 'replica'")
+		return err
+	}
+	dstPool, err := pgxpool.NewWithConfig(ctx, dstCfg)
 	if err != nil {
 		return fmt.Errorf("dest pool: %w", err)
 	}
@@ -161,7 +170,7 @@ func (p *Pipeline) initComponents() {
 			p.mu.Unlock()
 		}
 	})
-	p.schemaMgr = schema.NewMigrator(p.srcPool, p.dstPool, p.logger)
+	p.schemaMgr = schema.NewManager(p.srcPool, p.dstPool, p.logger)
 	p.coordinator = sentinel.NewCoordinator(p.messages, p.logger)
 
 	if p.cfg.Replication.OriginID != "" {
@@ -333,14 +342,7 @@ func (p *Pipeline) RunCloneAndFollow(ctx context.Context) error {
 		applierCh = p.bidiFilter.Run(ctx, msgCh)
 	}
 
-	return p.applier.Start(ctx, applierCh, func(lsn pglogrepl.LSN) {
-		p.decoder.ConfirmLSN(lsn)
-		p.mu.Lock()
-		p.progress.LastLSN = lsn
-		p.mu.Unlock()
-		p.Metrics.RecordApplied(lsn, 1, 0)
-		p.Metrics.RecordConfirmedLSN(lsn)
-	})
+	return p.startApplier(ctx, applierCh)
 }
 
 // SlotInfo holds information about an existing replication slot.
@@ -516,14 +518,7 @@ func (p *Pipeline) RunResumeCloneAndFollow(ctx context.Context) error {
 		applierCh = p.bidiFilter.Run(ctx, msgCh)
 	}
 
-	return p.applier.Start(ctx, applierCh, func(lsn pglogrepl.LSN) {
-		p.decoder.ConfirmLSN(lsn)
-		p.mu.Lock()
-		p.progress.LastLSN = lsn
-		p.mu.Unlock()
-		p.Metrics.RecordApplied(lsn, 1, 0)
-		p.Metrics.RecordConfirmedLSN(lsn)
-	})
+	return p.startApplier(ctx, applierCh)
 }
 
 // RunFollow starts CDC streaming from the given LSN (slot must already exist).
@@ -553,14 +548,7 @@ func (p *Pipeline) RunFollow(ctx context.Context, startLSN pglogrepl.LSN) error 
 		applierCh = p.bidiFilter.Run(ctx, msgCh)
 	}
 
-	return p.applier.Start(ctx, applierCh, func(lsn pglogrepl.LSN) {
-		p.decoder.ConfirmLSN(lsn)
-		p.mu.Lock()
-		p.progress.LastLSN = lsn
-		p.mu.Unlock()
-		p.Metrics.RecordApplied(lsn, 1, 0)
-		p.Metrics.RecordConfirmedLSN(lsn)
-	})
+	return p.startApplier(ctx, applierCh)
 }
 
 // RunSwitchover injects a sentinel message and waits for it to be confirmed,
@@ -584,6 +572,88 @@ func (p *Pipeline) RunSwitchover(ctx context.Context, timeout time.Duration) err
 
 	p.setPhase("switchover-complete")
 	p.logger.Info().Msg("switchover confirmed — destination is caught up")
+	return nil
+}
+
+// SetupReverseReplication prepares the destination to act as a new replication
+// source after switchover. It creates a publication and logical replication slot
+// on the destination, and drops the forward slot on the source.
+// Returns the slot name and the LSN to start streaming from.
+func (p *Pipeline) SetupReverseReplication(ctx context.Context) (slotName string, startLSN pglogrepl.LSN, err error) {
+	reverseSlot := p.cfg.Replication.SlotName + "_reverse"
+	reversePub := p.cfg.Replication.Publication + "_reverse"
+
+	var walLevel string
+	if err := p.dstPool.QueryRow(ctx, "SHOW wal_level").Scan(&walLevel); err != nil {
+		return "", 0, fmt.Errorf("check destination wal_level: %w", err)
+	}
+	if walLevel != "logical" {
+		return "", 0, fmt.Errorf("destination wal_level is %q, must be \"logical\" for reverse replication", walLevel)
+	}
+
+	// Create publication on destination (new source).
+	var pubExists bool
+	err = p.dstPool.QueryRow(ctx,
+		"SELECT EXISTS(SELECT 1 FROM pg_publication WHERE pubname = $1)", reversePub).Scan(&pubExists)
+	if err != nil {
+		return "", 0, fmt.Errorf("check reverse publication: %w", err)
+	}
+	if !pubExists {
+		_, err = p.dstPool.Exec(ctx, fmt.Sprintf("CREATE PUBLICATION %q FOR ALL TABLES", reversePub))
+		if err != nil {
+			return "", 0, fmt.Errorf("create reverse publication: %w", err)
+		}
+		p.logger.Info().Str("publication", reversePub).Msg("created reverse publication on destination")
+	}
+
+	// Create replication slot on destination (new source).
+	connTimeout := 30 * time.Second
+	replCtx, replCancel := context.WithTimeout(ctx, connTimeout)
+	destReplConn, err := pgconn.Connect(replCtx, p.cfg.Dest.ReplicationDSN())
+	replCancel()
+	if err != nil {
+		return "", 0, fmt.Errorf("reverse replication connection: %w", err)
+	}
+	defer destReplConn.Close(ctx) //nolint:errcheck
+
+	reverseDecoder := stream.NewDecoder(destReplConn, reverseSlot, reversePub, p.logger)
+	_, err = reverseDecoder.CreateSlot(ctx, 0)
+	if err != nil {
+		return "", 0, fmt.Errorf("create reverse replication slot: %w", err)
+	}
+	reverseLSN := reverseDecoder.StartLSN()
+	reverseDecoder.Close()
+
+	p.logger.Info().
+		Str("slot", reverseSlot).
+		Str("publication", reversePub).
+		Stringer("start_lsn", reverseLSN).
+		Msg("reverse replication infrastructure ready")
+
+	// Drop the forward slot on the source (cleanup).
+	// NOTE: This may fail if the decoder is still connected. The caller
+	// should close the pipeline first, then drop the slot via DropForwardSlot.
+	p.logger.Info().Str("forward_slot", p.cfg.Replication.SlotName).Msg("forward slot should be dropped after pipeline close")
+
+	return reverseSlot, reverseLSN, nil
+}
+
+// DropForwardSlot drops the forward replication slot on the source.
+// Call this after Close() to ensure the slot is no longer active.
+func (p *Pipeline) DropForwardSlot(ctx context.Context) error {
+	dsn := p.cfg.Source.DSN()
+	pool, err := pgxpool.New(ctx, dsn)
+	if err != nil {
+		return fmt.Errorf("connect to source for slot drop: %w", err)
+	}
+	defer pool.Close()
+
+	_, err = pool.Exec(ctx,
+		"SELECT pg_drop_replication_slot(slot_name) FROM pg_replication_slots WHERE slot_name = $1 AND NOT active",
+		p.cfg.Replication.SlotName)
+	if err != nil {
+		return fmt.Errorf("drop forward slot: %w", err)
+	}
 	return nil
 }
 
@@ -650,6 +720,159 @@ func (p *Pipeline) initTableMetrics(tables []snapshot.TableInfo) {
 // Config returns the pipeline configuration (for API exposure).
 func (p *Pipeline) Config() *config.Config {
 	return p.cfg
+}
+
+const (
+	maxDecoderRetries  = 5
+	initialRetryDelay  = 2 * time.Second
+	maxRetryDelay      = 30 * time.Second
+)
+
+func (p *Pipeline) startApplier(ctx context.Context, ch <-chan stream.Message) error {
+	merged := p.mergeMessages(ctx, ch)
+	return p.runApplierWithRetry(ctx, merged)
+}
+
+func (p *Pipeline) mergeMessages(ctx context.Context, decoder <-chan stream.Message) <-chan stream.Message {
+	out := make(chan stream.Message, cap(decoder))
+	go func() {
+		defer close(out)
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case msg, ok := <-decoder:
+				if !ok {
+					for {
+						select {
+						case msg := <-p.messages:
+							select {
+							case out <- msg:
+							case <-ctx.Done():
+								return
+							}
+						default:
+							return
+						}
+					}
+				}
+				select {
+				case out <- msg:
+				case <-ctx.Done():
+					return
+				}
+			case msg := <-p.messages:
+				select {
+				case out <- msg:
+				case <-ctx.Done():
+					return
+				}
+			}
+		}
+	}()
+	return out
+}
+
+func (p *Pipeline) runApplierWithRetry(ctx context.Context, ch <-chan stream.Message) error {
+	retries := 0
+	delay := initialRetryDelay
+	watermark := pglogrepl.LSN(0)
+
+	for {
+		err := p.applier.Start(ctx, ch, func(lsn pglogrepl.LSN) {
+			p.decoder.ConfirmLSN(lsn)
+			p.mu.Lock()
+			p.progress.LastLSN = lsn
+			p.mu.Unlock()
+			p.Metrics.RecordApplied(lsn, 1, 0)
+			p.Metrics.RecordConfirmedLSN(lsn)
+		}, func(id string) {
+			if p.coordinator != nil {
+				p.coordinator.Confirm(id)
+			}
+		})
+		if err != nil {
+			return err
+		}
+
+		decErr := p.decoder.Err()
+		if decErr == nil {
+			return nil
+		}
+
+		if ctx.Err() != nil {
+			return ctx.Err()
+		}
+
+		retries++
+		if retries > maxDecoderRetries {
+			return fmt.Errorf("decoder: %w (exhausted %d retries)", decErr, maxDecoderRetries)
+		}
+
+		p.mu.Lock()
+		currentLSN := p.progress.LastLSN
+		p.mu.Unlock()
+
+		if currentLSN > watermark {
+			watermark = currentLSN
+			retries = 1
+			delay = initialRetryDelay
+		}
+
+		p.logger.Warn().
+			Err(decErr).
+			Int("retry", retries).
+			Int("max_retries", maxDecoderRetries).
+			Stringer("resume_lsn", currentLSN).
+			Dur("delay", delay).
+			Msg("decoder failed, reconnecting")
+
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case <-time.After(delay):
+		}
+
+		delay = min(delay*2, maxRetryDelay)
+
+		newCh, err := p.reconnectDecoder(ctx, currentLSN)
+		if err != nil {
+			return fmt.Errorf("reconnect decoder: %w (original: %v)", err, decErr)
+		}
+		ch = p.mergeMessages(ctx, newCh)
+	}
+}
+
+func (p *Pipeline) reconnectDecoder(ctx context.Context, resumeLSN pglogrepl.LSN) (<-chan stream.Message, error) {
+	p.decoder.Close()
+
+	if p.replConn != nil {
+		_ = p.replConn.Close(ctx)
+	}
+
+	connTimeout := 30 * time.Second
+	replCtx, replCancel := context.WithTimeout(ctx, connTimeout)
+	replConn, err := pgconn.Connect(replCtx, p.cfg.Source.ReplicationDSN())
+	replCancel()
+	if err != nil {
+		return nil, fmt.Errorf("replication reconnect: %w", err)
+	}
+	p.replConn = replConn
+
+	p.decoder = stream.NewDecoder(replConn, p.cfg.Replication.SlotName, p.cfg.Replication.Publication, p.logger)
+	if _, err := p.decoder.CreateSlot(ctx, resumeLSN); err != nil {
+		return nil, fmt.Errorf("create slot for resume: %w", err)
+	}
+
+	msgCh, err := p.decoder.StartStreaming(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("start streaming after reconnect: %w", err)
+	}
+
+	if p.bidiFilter != nil {
+		return p.bidiFilter.Run(ctx, msgCh), nil
+	}
+	return msgCh, nil
 }
 
 func (p *Pipeline) ensurePublication(ctx context.Context) error {

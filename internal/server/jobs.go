@@ -5,8 +5,8 @@ import (
 	"net/http"
 	"time"
 
-	"github.com/jfoltran/migrator/internal/config"
-	"github.com/jfoltran/migrator/internal/daemon"
+	"github.com/jfoltran/pgmanager/internal/config"
+	"github.com/jfoltran/pgmanager/internal/daemon"
 )
 
 type jobHandlers struct {
@@ -163,12 +163,12 @@ func buildConfig(sourceURI, destURI, slotName, publication string, workers int) 
 	if slotName != "" {
 		cfg.Replication.SlotName = slotName
 	} else {
-		cfg.Replication.SlotName = "migrator"
+		cfg.Replication.SlotName = "pgmanager"
 	}
 	if publication != "" {
 		cfg.Replication.Publication = publication
 	} else {
-		cfg.Replication.Publication = "migrator_pub"
+		cfg.Replication.Publication = "pgmanager_pub"
 	}
 	cfg.Replication.OutputPlugin = "pgoutput"
 

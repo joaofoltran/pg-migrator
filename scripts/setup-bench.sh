@@ -30,7 +30,7 @@ WORKERS_PER_TABLE=$((TOTAL_CPUS / NUM_TABLES))
 if ((WORKERS_PER_TABLE < 1)); then WORKERS_PER_TABLE=1; fi
 if ((WORKERS_PER_TABLE > 4)); then WORKERS_PER_TABLE=4; fi
 
-SOURCE_DSN="postgres://postgres:source@localhost:5432/source"
+SOURCE_DSN="postgres://postgres:source@localhost:55432/source"
 
 # ── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -153,7 +153,7 @@ $COMPOSE_CMD -f "$COMPOSE_FILE" up -d 2>&1 | tail -2
 
 log "Waiting for databases..."
 wait_for_pg "$SOURCE_DSN" "source-pg" 60
-wait_for_pg "postgres://postgres:dest@localhost:5433/dest" "dest-pg" 60
+wait_for_pg "postgres://postgres:dest@localhost:55433/dest" "dest-pg" 60
 
 # ── Seed function ────────────────────────────────────────────────────────────
 
@@ -402,8 +402,8 @@ printf "  %-22s %12s %12s\n" "─────" "────" "────"
 printf "  %-22s %12s %12s\n" "TOTAL" "$(fmt_count $total_rows)" "$(fmt_bytes $total_size)"
 echo ""
 
-log "Containers ready. Source: localhost:5432, Dest: localhost:5433"
+log "Containers ready. Source: localhost:55432, Dest: localhost:55433"
 echo ""
-echo "  Run migration:  ./migrator clone --source-uri '$SOURCE_DSN' --dest-uri 'postgres://postgres:dest@localhost:5433/dest'"
+echo "  Run migration:  ./pgmanager clone --source-uri '$SOURCE_DSN' --dest-uri 'postgres://postgres:dest@localhost:55433/dest'"
 echo "  Tear down:      $0 --down"
 echo ""

@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -29,9 +30,9 @@ func (t TableInfo) QualifiedName() string {
 
 // CopyResult holds the outcome of copying a single table.
 type CopyResult struct {
-	Table    TableInfo
+	Table      TableInfo
 	RowsCopied int64
-	Err      error
+	Err        error
 }
 
 // ProgressFunc is called to report COPY progress for a table.
@@ -66,11 +67,13 @@ func (c *Copier) SetProgressFunc(fn ProgressFunc) {
 // ListTables returns all user tables from the source database.
 func (c *Copier) ListTables(ctx context.Context) ([]TableInfo, error) {
 	rows, err := c.source.Query(ctx, `
-		SELECT schemaname, relname,
-			COALESCE(n_live_tup, 0),
-			COALESCE(pg_table_size(schemaname || '.' || relname), 0)
-		FROM pg_stat_user_tables
-		ORDER BY pg_table_size(schemaname || '.' || relname) DESC`)
+		SELECT s.schemaname, s.relname,
+			GREATEST(COALESCE(s.n_live_tup, 0), COALESCE(c.reltuples::bigint, 0)),
+			COALESCE(pg_table_size(quote_ident(s.schemaname) || '.' || quote_ident(s.relname)), 0)
+		FROM pg_stat_user_tables s
+		JOIN pg_class c ON c.relname = s.relname
+			AND c.relnamespace = (SELECT oid FROM pg_namespace WHERE nspname = s.schemaname)
+		ORDER BY pg_table_size(quote_ident(s.schemaname) || '.' || quote_ident(s.relname)) DESC`)
 	if err != nil {
 		return nil, fmt.Errorf("list tables: %w", err)
 	}
@@ -156,7 +159,7 @@ func (c *Copier) reportProgress(table TableInfo, event string, rowsCopied int64)
 	}
 }
 
-const copyBatchSize = 50000
+const progressReportInterval = 500 * time.Millisecond
 
 func (c *Copier) copyTable(ctx context.Context, table TableInfo, snapshotName string, workerID int) CopyResult {
 	log := c.logger.With().Str("table", table.QualifiedName()).Int("worker", workerID).Logger()
@@ -186,7 +189,6 @@ func (c *Copier) copyTable(ctx context.Context, table TableInfo, snapshotName st
 	if err != nil {
 		return CopyResult{Table: table, Err: fmt.Errorf("select from %s: %w", qn, err)}
 	}
-	defer rows.Close()
 
 	fieldDescs := rows.FieldDescriptions()
 	colNames := make([]string, len(fieldDescs))
@@ -194,47 +196,70 @@ func (c *Copier) copyTable(ctx context.Context, table TableInfo, snapshotName st
 		colNames[i] = fd.Name
 	}
 
-	var totalCopied int64
-	batch := make([][]any, 0, copyBatchSize)
-
-	for rows.Next() {
-		vals, err := rows.Values()
-		if err != nil {
-			return CopyResult{Table: table, Err: fmt.Errorf("read row: %w", err)}
-		}
-		batch = append(batch, vals)
-
-		if len(batch) >= copyBatchSize {
-			n, err := c.dest.CopyFrom(ctx,
-				pgx.Identifier{table.Schema, table.Name},
-				colNames,
-				pgx.CopyFromRows(batch))
-			if err != nil {
-				return CopyResult{Table: table, Err: fmt.Errorf("copy to %s: %w", qn, err)}
-			}
-			totalCopied += n
-			batch = batch[:0]
-			c.reportProgress(table, "progress", totalCopied)
-		}
-	}
-	if err := rows.Err(); err != nil {
-		return CopyResult{Table: table, Err: fmt.Errorf("rows iteration: %w", err)}
+	src := &rowStreamer{
+		rows:     rows,
+		report:   c.reportProgress,
+		table:    table,
+		colCount: len(colNames),
 	}
 
-	if len(batch) > 0 {
-		n, err := c.dest.CopyFrom(ctx,
-			pgx.Identifier{table.Schema, table.Name},
-			colNames,
-			pgx.CopyFromRows(batch))
-		if err != nil {
-			return CopyResult{Table: table, Err: fmt.Errorf("copy to %s: %w", qn, err)}
-		}
-		totalCopied += n
+	n, err := c.dest.CopyFrom(ctx,
+		pgx.Identifier{table.Schema, table.Name},
+		colNames,
+		src)
+	rows.Close()
+	if err != nil {
+		return CopyResult{Table: table, Err: fmt.Errorf("copy to %s: %w", qn, err)}
+	}
+	if src.err != nil {
+		return CopyResult{Table: table, Err: fmt.Errorf("read from %s: %w", qn, src.err)}
 	}
 
-	log.Info().Int64("rows", totalCopied).Msg("COPY complete")
-	c.reportProgress(table, "done", totalCopied)
-	return CopyResult{Table: table, RowsCopied: totalCopied}
+	log.Info().Int64("rows", n).Msg("COPY complete")
+	c.reportProgress(table, "done", n)
+	return CopyResult{Table: table, RowsCopied: n}
+}
+
+// rowStreamer implements pgx.CopyFromSource by streaming rows one at a time
+// from a pgx.Rows result set. This avoids buffering entire tables in memory.
+type rowStreamer struct {
+	rows       pgx.Rows
+	report     ProgressFunc
+	table      TableInfo
+	colCount   int
+	count      int64
+	vals       []any
+	err        error
+	lastReport time.Time
+}
+
+func (s *rowStreamer) Next() bool {
+	if !s.rows.Next() {
+		return false
+	}
+	vals, err := s.rows.Values()
+	if err != nil {
+		s.err = err
+		return false
+	}
+	s.vals = vals
+	s.count++
+	if s.report != nil && time.Since(s.lastReport) >= progressReportInterval {
+		s.report(s.table, "progress", s.count)
+		s.lastReport = time.Now()
+	}
+	return true
+}
+
+func (s *rowStreamer) Values() ([]any, error) {
+	return s.vals, nil
+}
+
+func (s *rowStreamer) Err() error {
+	if s.err != nil {
+		return s.err
+	}
+	return s.rows.Err()
 }
 
 func quoteIdent(s string) string {

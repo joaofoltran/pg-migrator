@@ -1,15 +1,13 @@
 package cluster
 
 import (
-	"encoding/json"
+	"context"
 	"errors"
 	"fmt"
-	"os"
-	"path/filepath"
-	"sync"
 	"time"
 
-	"github.com/jfoltran/migrator/internal/daemon"
+	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgxpool"
 )
 
 type NodeRole string
@@ -26,7 +24,29 @@ type Node struct {
 	Host     string   `json:"host"`
 	Port     uint16   `json:"port"`
 	Role     NodeRole `json:"role"`
+	User     string   `json:"user,omitempty"`
+	Password string   `json:"password,omitempty"`
+	DBName   string   `json:"dbname,omitempty"`
 	AgentURL string   `json:"agent_url,omitempty"`
+}
+
+func (n Node) DSN() string {
+	user := n.User
+	if user == "" {
+		user = "postgres"
+	}
+	port := n.Port
+	if port == 0 {
+		port = 5432
+	}
+	dbname := n.DBName
+	if dbname == "" {
+		dbname = "postgres"
+	}
+	if n.Password != "" {
+		return fmt.Sprintf("postgres://%s:%s@%s:%d/%s", user, n.Password, n.Host, port, dbname)
+	}
+	return fmt.Sprintf("postgres://%s@%s:%d/%s", user, n.Host, port, dbname)
 }
 
 type Cluster struct {
@@ -39,148 +59,219 @@ type Cluster struct {
 }
 
 type Store struct {
-	mu   sync.RWMutex
-	path string
-	data storeData
+	pool *pgxpool.Pool
 }
 
-type storeData struct {
-	Clusters []Cluster `json:"clusters"`
+func NewStore(pool *pgxpool.Pool) *Store {
+	return &Store{pool: pool}
 }
 
-func NewStore() (*Store, error) {
-	dir, err := daemon.DataDir()
+func (s *Store) List(ctx context.Context) ([]Cluster, error) {
+	rows, err := s.pool.Query(ctx,
+		"SELECT id, name, tags, created_at, updated_at FROM clusters ORDER BY created_at")
 	if err != nil {
 		return nil, err
 	}
-	path := filepath.Join(dir, "clusters.json")
-	s := &Store{path: path}
-	if err := s.load(); err != nil && !os.IsNotExist(err) {
-		return nil, fmt.Errorf("load cluster store: %w", err)
+	defer rows.Close()
+
+	var clusters []Cluster
+	for rows.Next() {
+		var c Cluster
+		if err := rows.Scan(&c.ID, &c.Name, &c.Tags, &c.CreatedAt, &c.UpdatedAt); err != nil {
+			return nil, err
+		}
+		clusters = append(clusters, c)
 	}
-	return s, nil
+	if clusters == nil {
+		clusters = []Cluster{}
+	}
+
+	for i := range clusters {
+		nodes, err := s.listNodes(ctx, clusters[i].ID)
+		if err != nil {
+			return nil, err
+		}
+		clusters[i].Nodes = nodes
+	}
+	return clusters, nil
 }
 
-func (s *Store) load() error {
-	data, err := os.ReadFile(s.path)
+func (s *Store) Get(ctx context.Context, id string) (Cluster, bool, error) {
+	var c Cluster
+	err := s.pool.QueryRow(ctx,
+		"SELECT id, name, tags, created_at, updated_at FROM clusters WHERE id = $1", id,
+	).Scan(&c.ID, &c.Name, &c.Tags, &c.CreatedAt, &c.UpdatedAt)
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return Cluster{}, false, nil
+		}
+		return Cluster{}, false, err
+	}
+
+	nodes, err := s.listNodes(ctx, id)
+	if err != nil {
+		return Cluster{}, false, err
+	}
+	c.Nodes = nodes
+	return c, true, nil
+}
+
+func (s *Store) Add(ctx context.Context, c Cluster) error {
+	tx, err := s.pool.Begin(ctx)
 	if err != nil {
 		return err
 	}
-	return json.Unmarshal(data, &s.data)
-}
-
-func (s *Store) save() error {
-	data, err := json.MarshalIndent(s.data, "", "  ")
-	if err != nil {
-		return err
-	}
-	tmp := s.path + ".tmp"
-	if err := os.WriteFile(tmp, data, 0o600); err != nil {
-		return err
-	}
-	return os.Rename(tmp, s.path)
-}
-
-func (s *Store) List() []Cluster {
-	s.mu.RLock()
-	defer s.mu.RUnlock()
-	out := make([]Cluster, len(s.data.Clusters))
-	copy(out, s.data.Clusters)
-	return out
-}
-
-func (s *Store) Get(id string) (Cluster, bool) {
-	s.mu.RLock()
-	defer s.mu.RUnlock()
-	for _, c := range s.data.Clusters {
-		if c.ID == id {
-			return c, true
-		}
-	}
-	return Cluster{}, false
-}
-
-func (s *Store) Add(c Cluster) error {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-
-	for _, existing := range s.data.Clusters {
-		if existing.ID == c.ID {
-			return fmt.Errorf("cluster %q already exists", c.ID)
-		}
-	}
+	defer tx.Rollback(ctx)
 
 	now := time.Now().UTC()
-	c.CreatedAt = now
-	c.UpdatedAt = now
-	s.data.Clusters = append(s.data.Clusters, c)
-	return s.save()
-}
+	tags := c.Tags
+	if tags == nil {
+		tags = []string{}
+	}
+	_, err = tx.Exec(ctx,
+		`INSERT INTO clusters (id, name, tags, created_at, updated_at)
+		 VALUES ($1, $2, $3, $4, $5)`,
+		c.ID, c.Name, tags, now, now)
+	if err != nil {
+		return fmt.Errorf("insert cluster: %w", err)
+	}
 
-func (s *Store) Update(c Cluster) error {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-
-	for i, existing := range s.data.Clusters {
-		if existing.ID == c.ID {
-			c.CreatedAt = existing.CreatedAt
-			c.UpdatedAt = time.Now().UTC()
-			s.data.Clusters[i] = c
-			return s.save()
+	for _, n := range c.Nodes {
+		if err := insertNode(ctx, tx, c.ID, n); err != nil {
+			return err
 		}
 	}
-	return fmt.Errorf("cluster %q not found", c.ID)
+
+	return tx.Commit(ctx)
 }
 
-func (s *Store) Remove(id string) error {
-	s.mu.Lock()
-	defer s.mu.Unlock()
+func (s *Store) Update(ctx context.Context, c Cluster) error {
+	tx, err := s.pool.Begin(ctx)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback(ctx)
 
-	for i, c := range s.data.Clusters {
-		if c.ID == id {
-			s.data.Clusters = append(s.data.Clusters[:i], s.data.Clusters[i+1:]...)
-			return s.save()
+	tags := c.Tags
+	if tags == nil {
+		tags = []string{}
+	}
+	tag, err := tx.Exec(ctx,
+		`UPDATE clusters SET name = $2, tags = $3, updated_at = now() WHERE id = $1`,
+		c.ID, c.Name, tags)
+	if err != nil {
+		return err
+	}
+	if tag.RowsAffected() == 0 {
+		return fmt.Errorf("cluster %q not found", c.ID)
+	}
+
+	_, err = tx.Exec(ctx, "DELETE FROM nodes WHERE cluster_id = $1", c.ID)
+	if err != nil {
+		return err
+	}
+
+	for _, n := range c.Nodes {
+		if err := insertNode(ctx, tx, c.ID, n); err != nil {
+			return err
 		}
 	}
-	return fmt.Errorf("cluster %q not found", id)
+
+	return tx.Commit(ctx)
 }
 
-func (s *Store) AddNode(clusterID string, n Node) error {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-
-	for i, c := range s.data.Clusters {
-		if c.ID == clusterID {
-			for _, existing := range c.Nodes {
-				if existing.ID == n.ID {
-					return fmt.Errorf("node %q already exists in cluster %q", n.ID, clusterID)
-				}
-			}
-			s.data.Clusters[i].Nodes = append(s.data.Clusters[i].Nodes, n)
-			s.data.Clusters[i].UpdatedAt = time.Now().UTC()
-			return s.save()
-		}
+func (s *Store) Remove(ctx context.Context, id string) error {
+	tag, err := s.pool.Exec(ctx, "DELETE FROM clusters WHERE id = $1", id)
+	if err != nil {
+		return err
 	}
-	return fmt.Errorf("cluster %q not found", clusterID)
+	if tag.RowsAffected() == 0 {
+		return fmt.Errorf("cluster %q not found", id)
+	}
+	return nil
 }
 
-func (s *Store) RemoveNode(clusterID, nodeID string) error {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-
-	for i, c := range s.data.Clusters {
-		if c.ID == clusterID {
-			for j, n := range c.Nodes {
-				if n.ID == nodeID {
-					s.data.Clusters[i].Nodes = append(c.Nodes[:j], c.Nodes[j+1:]...)
-					s.data.Clusters[i].UpdatedAt = time.Now().UTC()
-					return s.save()
-				}
-			}
-			return fmt.Errorf("node %q not found in cluster %q", nodeID, clusterID)
-		}
+func (s *Store) AddNode(ctx context.Context, clusterID string, n Node) error {
+	tx, err := s.pool.Begin(ctx)
+	if err != nil {
+		return err
 	}
-	return fmt.Errorf("cluster %q not found", clusterID)
+	defer tx.Rollback(ctx)
+
+	if err := insertNode(ctx, tx, clusterID, n); err != nil {
+		return err
+	}
+
+	_, err = tx.Exec(ctx, "UPDATE clusters SET updated_at = now() WHERE id = $1", clusterID)
+	if err != nil {
+		return err
+	}
+
+	return tx.Commit(ctx)
+}
+
+func (s *Store) RemoveNode(ctx context.Context, clusterID, nodeID string) error {
+	tx, err := s.pool.Begin(ctx)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback(ctx)
+
+	tag, err := tx.Exec(ctx,
+		"DELETE FROM nodes WHERE cluster_id = $1 AND id = $2", clusterID, nodeID)
+	if err != nil {
+		return err
+	}
+	if tag.RowsAffected() == 0 {
+		return fmt.Errorf("node %q not found in cluster %q", nodeID, clusterID)
+	}
+
+	_, err = tx.Exec(ctx, "UPDATE clusters SET updated_at = now() WHERE id = $1", clusterID)
+	if err != nil {
+		return err
+	}
+
+	return tx.Commit(ctx)
+}
+
+func (s *Store) listNodes(ctx context.Context, clusterID string) ([]Node, error) {
+	rows, err := s.pool.Query(ctx,
+		`SELECT id, name, host, port, role, username, password, dbname, agent_url
+		 FROM nodes WHERE cluster_id = $1 ORDER BY id`, clusterID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var nodes []Node
+	for rows.Next() {
+		var n Node
+		var user, pass, dbname, agentURL string
+		if err := rows.Scan(&n.ID, &n.Name, &n.Host, &n.Port, &n.Role, &user, &pass, &dbname, &agentURL); err != nil {
+			return nil, err
+		}
+		n.User = user
+		n.Password = pass
+		n.DBName = dbname
+		n.AgentURL = agentURL
+		nodes = append(nodes, n)
+	}
+	if nodes == nil {
+		nodes = []Node{}
+	}
+	return nodes, nil
+}
+
+func insertNode(ctx context.Context, tx pgx.Tx, clusterID string, n Node) error {
+	_, err := tx.Exec(ctx,
+		`INSERT INTO nodes (id, cluster_id, name, host, port, role, username, password, dbname, agent_url)
+		 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)`,
+		n.ID, clusterID, n.Name, n.Host, n.Port, string(n.Role),
+		n.User, n.Password, n.DBName, n.AgentURL)
+	if err != nil {
+		return fmt.Errorf("insert node %q: %w", n.ID, err)
+	}
+	return nil
 }
 
 func ValidateCluster(c Cluster) error {

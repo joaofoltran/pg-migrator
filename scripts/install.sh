@@ -1,12 +1,12 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-# migrator installer
-# Usage: curl -sSL https://raw.githubusercontent.com/jfoltran/migrator/main/scripts/install.sh | bash
+# pgmanager installer
+# Usage: curl -sSL https://raw.githubusercontent.com/jfoltran/pgmanager/main/scripts/install.sh | bash
 
-REPO="jfoltran/migrator"
+REPO="jfoltran/pgmanager"
 INSTALL_DIR="/usr/local/bin"
-BINARY="migrator"
+BINARY="pgmanager"
 
 # Colors
 RED='\033[0;31m'
@@ -59,7 +59,7 @@ download() {
 }
 
 main() {
-    info "Installing migrator..."
+    info "Installing pgmanager..."
 
     local os arch version
     os=$(detect_os)
@@ -67,9 +67,9 @@ main() {
 
     info "Detected platform: ${os}/${arch}"
 
-    version=${PGMIGRATOR_VERSION:-$(get_latest_version)}
+    version=${PGMANAGER_VERSION:-$(get_latest_version)}
     if [ -z "$version" ]; then
-        error "Could not determine latest version. Set PGMIGRATOR_VERSION manually."
+        error "Could not determine latest version. Set PGMANAGER_VERSION manually."
     fi
     info "Version: ${version}"
 
@@ -120,7 +120,7 @@ main() {
     fi
     chmod +x "${INSTALL_DIR}/${BINARY}"
 
-    info "migrator installed to ${INSTALL_DIR}/${BINARY}"
+    info "pgmanager installed to ${INSTALL_DIR}/${BINARY}"
     "${INSTALL_DIR}/${BINARY}" --help 2>/dev/null | head -3 || true
     echo ""
     info "Installation complete!"

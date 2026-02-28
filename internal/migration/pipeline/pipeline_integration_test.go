@@ -12,9 +12,9 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/rs/zerolog"
 
-	"github.com/jfoltran/migrator/internal/config"
-	"github.com/jfoltran/migrator/internal/migration/pipeline"
-	"github.com/jfoltran/migrator/internal/testutil"
+	"github.com/jfoltran/pgmanager/internal/config"
+	"github.com/jfoltran/pgmanager/internal/migration/pipeline"
+	"github.com/jfoltran/pgmanager/internal/testutil"
 )
 
 func TestMain(m *testing.M) {
@@ -65,14 +65,14 @@ func testConfig(slotName, pubName string) *config.Config {
 	return &config.Config{
 		Source: config.DatabaseConfig{
 			Host:     "localhost",
-			Port:     5432,
+			Port:     55432,
 			User:     "postgres",
 			Password: "source",
 			DBName:   "source",
 		},
 		Dest: config.DatabaseConfig{
 			Host:     "localhost",
-			Port:     5433,
+			Port:     55433,
 			User:     "postgres",
 			Password: "dest",
 			DBName:   "dest",
@@ -647,14 +647,14 @@ func TestClone_InvalidConfig(t *testing.T) {
 	cfg := &config.Config{
 		Source: config.DatabaseConfig{
 			Host:     "localhost",
-			Port:     5432,
+			Port:     55432,
 			User:     "postgres",
 			Password: "wrong_password",
 			DBName:   "nonexistent_db",
 		},
 		Dest: config.DatabaseConfig{
 			Host:     "localhost",
-			Port:     5433,
+			Port:     55433,
 			User:     "postgres",
 			Password: "dest",
 			DBName:   "dest",

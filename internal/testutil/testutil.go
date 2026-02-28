@@ -14,19 +14,19 @@ import (
 )
 
 const (
-	DefaultSourceDSN = "postgres://postgres:source@localhost:5432/source?sslmode=disable"
-	DefaultDestDSN   = "postgres://postgres:dest@localhost:5433/dest?sslmode=disable"
+	DefaultSourceDSN = "postgres://postgres:source@localhost:55432/source?sslmode=disable"
+	DefaultDestDSN   = "postgres://postgres:dest@localhost:55433/dest?sslmode=disable"
 )
 
 func SourceDSN() string {
-	if v := os.Getenv("PGMIGRATOR_SOURCE_DSN"); v != "" {
+	if v := os.Getenv("PGMANAGER_SOURCE_DSN"); v != "" {
 		return v
 	}
 	return DefaultSourceDSN
 }
 
 func DestDSN() string {
-	if v := os.Getenv("PGMIGRATOR_DEST_DSN"); v != "" {
+	if v := os.Getenv("PGMANAGER_DEST_DSN"); v != "" {
 		return v
 	}
 	return DefaultDestDSN
@@ -59,7 +59,7 @@ func ComposeCommand() (string, []string) {
 }
 
 func ProjectRoot() string {
-	if v := os.Getenv("PGMIGRATOR_ROOT"); v != "" {
+	if v := os.Getenv("PGMANAGER_ROOT"); v != "" {
 		return v
 	}
 	dir, _ := os.Getwd()

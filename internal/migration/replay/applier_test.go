@@ -3,7 +3,7 @@ package replay
 import (
 	"testing"
 
-	"github.com/jfoltran/migrator/internal/migration/stream"
+	"github.com/jfoltran/pgmanager/internal/migration/stream"
 )
 
 func TestQuoteIdent(t *testing.T) {
@@ -41,32 +41,6 @@ func TestQualifiedName(t *testing.T) {
 		if got != tt.want {
 			t.Errorf("qualifiedName(%q, %q) = %q, want %q", tt.namespace, tt.table, got, tt.want)
 		}
-	}
-}
-
-func TestBuildInsertParts(t *testing.T) {
-	a := &Applier{relations: make(map[uint32]*stream.RelationMessage)}
-
-	tuple := &stream.TupleData{
-		Columns: []stream.Column{
-			{Name: "id", Value: []byte("1")},
-			{Name: "name", Value: []byte("alice")},
-		},
-	}
-
-	cols, vals, placeholders := a.buildInsertParts(tuple)
-
-	if len(cols) != 2 {
-		t.Fatalf("expected 2 columns, got %d", len(cols))
-	}
-	if cols[0] != `"id"` || cols[1] != `"name"` {
-		t.Errorf("cols = %v", cols)
-	}
-	if vals[0] != "1" || vals[1] != "alice" {
-		t.Errorf("vals = %v", vals)
-	}
-	if placeholders[0] != "$1" || placeholders[1] != "$2" {
-		t.Errorf("placeholders = %v", placeholders)
 	}
 }
 
@@ -155,5 +129,60 @@ func TestBuildWhereClauses_BothNil(t *testing.T) {
 	clauses, vals := a.buildWhereClauses(m, nil, 0)
 	if len(clauses) != 0 || len(vals) != 0 {
 		t.Errorf("expected empty results, got clauses=%v vals=%v", clauses, vals)
+	}
+}
+
+func TestInsertBatch_Add(t *testing.T) {
+	var b insertBatch
+	b.reset("public", "users")
+
+	msg := &stream.ChangeMessage{
+		Namespace: "public",
+		Table:     "users",
+		Op:        stream.OpInsert,
+		NewTuple: &stream.TupleData{
+			Columns: []stream.Column{
+				{Name: "id", Value: []byte("1")},
+				{Name: "name", Value: []byte("alice")},
+			},
+		},
+	}
+
+	b.add(msg)
+	if b.len() != 1 {
+		t.Fatalf("expected 1 row, got %d", b.len())
+	}
+	if len(b.cols) != 2 {
+		t.Fatalf("expected 2 cols, got %d", len(b.cols))
+	}
+	if b.cols[0] != "id" || b.cols[1] != "name" {
+		t.Errorf("cols = %v", b.cols)
+	}
+	if b.rows[0][0] != "1" || b.rows[0][1] != "alice" {
+		t.Errorf("row = %v", b.rows[0])
+	}
+}
+
+func TestInsertBatch_Matches(t *testing.T) {
+	var b insertBatch
+	b.reset("public", "users")
+
+	same := &stream.ChangeMessage{Namespace: "public", Table: "users"}
+	diff := &stream.ChangeMessage{Namespace: "public", Table: "orders"}
+
+	if !b.matches(same) {
+		t.Error("expected match for same table")
+	}
+	if b.matches(diff) {
+		t.Error("expected no match for different table")
+	}
+}
+
+func TestInsertBatch_NilTuple(t *testing.T) {
+	var b insertBatch
+	b.reset("public", "users")
+	b.add(&stream.ChangeMessage{NewTuple: nil})
+	if b.len() != 0 {
+		t.Errorf("expected 0 rows for nil tuple, got %d", b.len())
 	}
 }

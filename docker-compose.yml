@@ -1,56 +1,35 @@
 services:
-  migrator:
+  pgmanager:
     build: .
     ports:
       - "7654:7654"
-    command:
-      - clone
-      - --follow
-      - --api-port=7654
-      - --source-uri=postgres://postgres:source@source-pg:5432/source
-      - --dest-uri=postgres://postgres:dest@dest-pg:5432/dest
+    environment:
+      PGMANAGER_LISTEN: "0.0.0.0"
+      PGMANAGER_PORT: "7654"
+      PGMANAGER_DB_URL: "postgres://pgmanager:pgmanager@db:5432/pgmanager?sslmode=disable"
+      PGMANAGER_LOG_LEVEL: "info"
+      PGMANAGER_LOG_FORMAT: "console"
     depends_on:
-      source-pg:
+      db:
         condition: service_healthy
-      dest-pg:
-        condition: service_healthy
+    restart: unless-stopped
 
-  source-pg:
-    image: postgres:18
+  db:
+    image: postgres:17-alpine
+    ports:
+      - "5432:5432"
     environment:
-      POSTGRES_DB: source
-      POSTGRES_PASSWORD: source
-      PGDATA: /var/lib/postgresql/data
-    command:
-      - postgres
-      - -c
-      - wal_level=logical
-      - -c
-      - max_replication_slots=4
-      - -c
-      - max_wal_senders=4
+      POSTGRES_DB: pgmanager
+      POSTGRES_USER: pgmanager
+      POSTGRES_PASSWORD: pgmanager
     volumes:
-      - source-data:/var/lib/postgresql/data
+      - db-data:/var/lib/postgresql/data
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U postgres"]
-      interval: 5s
-      timeout: 5s
-      retries: 5
-
-  dest-pg:
-    image: postgres:18
-    environment:
-      POSTGRES_DB: dest
-      POSTGRES_PASSWORD: dest
-      PGDATA: /var/lib/postgresql/data
-    volumes:
-      - dest-data:/var/lib/postgresql/data
-    healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U postgres"]
-      interval: 5s
-      timeout: 5s
-      retries: 5
+      test: ["CMD-SHELL", "pg_isready -U pgmanager -d pgmanager"]
+      interval: 3s
+      timeout: 3s
+      retries: 10
+    restart: unless-stopped
 
 volumes:
-  source-data:
-  dest-data:
+  db-data:

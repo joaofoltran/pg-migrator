@@ -95,7 +95,7 @@ type LoggingConfig struct {
 	Format string // "json" or "console"
 }
 
-// Config is the top-level configuration for migrator.
+// Config is the top-level configuration for pgmanager.
 type Config struct {
 	Source      DatabaseConfig
 	Dest        DatabaseConfig

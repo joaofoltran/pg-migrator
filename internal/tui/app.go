@@ -7,8 +7,8 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
 
-	"github.com/jfoltran/migrator/internal/metrics"
-	"github.com/jfoltran/migrator/internal/tui/components"
+	"github.com/jfoltran/pgmanager/internal/metrics"
+	"github.com/jfoltran/pgmanager/internal/tui/components"
 )
 
 // snapshotMsg carries a new metrics snapshot into the Bubble Tea update loop.
@@ -17,7 +17,7 @@ type snapshotMsg metrics.Snapshot
 // pipelineDoneMsg signals that the pipeline goroutine has finished.
 type pipelineDoneMsg struct{ err error }
 
-// Model is the main Bubble Tea model for the migrator TUI dashboard.
+// Model is the main Bubble Tea model for the pgmanager TUI dashboard.
 type Model struct {
 	collector  *metrics.Collector
 	sub        chan metrics.Snapshot
@@ -127,7 +127,7 @@ func (m Model) View() string {
 		Background(colorPrimary).
 		Width(w).
 		Padding(0, 1).
-		Render(" migrator")
+		Render(" pgmanager")
 	sections = append(sections, title)
 
 	// Header: phase, elapsed, lag, throughput.

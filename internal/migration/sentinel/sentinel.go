@@ -9,7 +9,7 @@ import (
 	"github.com/jackc/pglogrepl"
 	"github.com/rs/zerolog"
 
-	"github.com/jfoltran/migrator/internal/migration/stream"
+	"github.com/jfoltran/pgmanager/internal/migration/stream"
 )
 
 // SentinelMessage is a synthetic message injected into the pipeline for

@@ -1,12 +1,12 @@
-# migrator
+# pgmanager
 
 **PostgreSQL administration suite** — multi-cluster management with online migration, backup, standby management, monitoring, and cluster administration.
 
-## Why migrator?
+## Why pgmanager?
 
 Managing PostgreSQL clusters at scale is hard. Existing tools are fragmented — one for migration, another for backup, another for monitoring — each with different concepts, interfaces, and deployment models.
 
-migrator takes a unified approach:
+pgmanager takes a unified approach:
 
 - **Multi-cluster management** — register and manage multiple PostgreSQL clusters from a single daemon, agentless by default
 - **Zero database footprint** — only creates a replication slot and publication on the source. No triggers, no sentinel tables, no extensions
@@ -22,18 +22,18 @@ migrator takes a unified approach:
 ### Multi-Cluster Management
 
 ```
-Central Daemon (migrator daemon)
+Central Daemon (pgmanager daemon)
   │
   ├── Cluster A (agentless — libpq only)
   │     ├── primary node
   │     └── replica node
   │
   └── Cluster B (with optional agent)
-        ├── primary node  ◀── migrator agent
-        └── standby node  ◀── migrator agent
+        ├── primary node  ◀── pgmanager agent
+        └── standby node  ◀── pgmanager agent
 ```
 
-- **Register clusters** via CLI (`migrator cluster add`) or REST API (`POST /api/v1/clusters`)
+- **Register clusters** via CLI (`pgmanager cluster add`) or REST API (`POST /api/v1/clusters`)
 - **Agentless by default** — everything works over libpq. Optional agent for filesystem-level operations
 - **Connection testing** — validates reachability, PG version, replica status, and privilege levels
 - **Cluster-scoped jobs** — migration, backup, and standby operations are tied to specific clusters
@@ -55,7 +55,7 @@ Source PG ──(repl protocol)──> Decoder ──> [Bidi Filter] ──> App
 
 ### Monitoring
 
-migrator includes built-in observability with three interfaces:
+pgmanager includes built-in observability with three interfaces:
 
 **Web UI** — a React dashboard with sidebar navigation, cluster management, migration monitoring, and module switching. Served from the binary itself at port 7654.
 
@@ -63,7 +63,7 @@ migrator includes built-in observability with three interfaces:
 
 **REST API + WebSocket** — JSON API for status, per-table progress, cluster management, config, and logs. WebSocket endpoint pushes snapshots every 500ms.
 
-**Offline status** — `migrator status` reads from a persisted state file, so you can check progress even from a different terminal.
+**Offline status** — `pgmanager status` reads from a persisted state file, so you can check progress even from a different terminal.
 
 ## Quick Start
 
@@ -71,12 +71,12 @@ migrator includes built-in observability with three interfaces:
 
 ```bash
 # From source
-git clone https://github.com/jfoltran/migrator.git
-cd migrator
+git clone https://github.com/jfoltran/pgmanager.git
+cd pgmanager
 make build
 
 # Or with the installer script
-curl -sSL https://raw.githubusercontent.com/jfoltran/migrator/main/scripts/install.sh | bash
+curl -sSL https://raw.githubusercontent.com/jfoltra./pgmanager/main/scripts/install.sh | bash
 ```
 
 ### Prerequisites
@@ -95,25 +95,25 @@ max_wal_senders = 4
 #### Register a cluster
 
 ```bash
-migrator cluster add --id prod --name "Production" \
+pgmanager cluster add --id prod --name "Production" \
     --node primary:source-pg.local:5432 \
     --node replica:replica-pg.local:5432 \
     --tag env:prod
 
-migrator cluster list
-migrator cluster test prod --user postgres --password secret
+pgmanager cluster list
+pgmanager cluster test prod --user postgres --password secret
 ```
 
 #### Start the daemon
 
 ```bash
-migrator daemon start
+pgmanager daemon start
 ```
 
 #### Submit a migration job
 
 ```bash
-migrator clone --follow \
+pgmanager clone --follow \
     --source-uri="postgres://user:pass@source:5432/production" \
     --dest-uri="postgres://user:pass@dest:5432/production"
 ```
@@ -121,16 +121,16 @@ migrator clone --follow \
 #### Monitor progress
 
 ```bash
-migrator status
-migrator tui
-migrator logs -f
+pgmanager status
+pgmanager tui
+pgmanager logs -f
 # Or open http://localhost:7654 in your browser
 ```
 
 #### Cut over
 
 ```bash
-migrator switchover --timeout=30s \
+pgmanager switchover --timeout=30s \
     --source-uri="postgres://user:pass@source:5432/production" \
     --dest-uri="postgres://user:pass@dest:5432/production"
 ```
@@ -138,13 +138,13 @@ migrator switchover --timeout=30s \
 #### Stop the daemon
 
 ```bash
-migrator daemon stop
+pgmanager daemon stop
 ```
 
 #### Foreground mode (for CI / containers)
 
 ```bash
-migrator clone --follow --foreground \
+pgmanager clone --follow --foreground \
     --source-uri="postgres://user:pass@source:5432/production" \
     --dest-uri="postgres://user:pass@dest:5432/production"
 ```
@@ -176,7 +176,7 @@ All pipeline commands (`clone`, `follow`, `switchover`) auto-detect a running da
 
 ```bash
 # Build
-docker build -t migrator .
+docker build -t pgmanager .
 
 # Run with docker-compose (includes source + dest PostgreSQL)
 docker compose up
@@ -185,7 +185,7 @@ docker compose up
 ## Architecture
 
 ```
-cmd/migrator/               CLI commands (cobra)
+cm./pgmanager/               CLI commands (cobra)
 internal/
 ├── cluster/                Shared — Cluster/Node data model, JSON store, connection testing
 ├── config/                 Shared — connection config, validation
@@ -214,7 +214,7 @@ Shared infrastructure (`cluster`, `config`, `daemon`, `server`, `metrics`, `tui`
 - **Security first** — passwords are never logged or exposed via API. Connection testing validates privilege levels. Cluster store uses 0600 file permissions
 - **Least privilege** — every module documents and validates minimum required PG roles. Never assumes superuser
 - **Daemon-first** — pipeline runs in a background daemon. CLI commands are thin API clients
-- **Multi-cluster** — clusters registered via JSON store at `~/.migrator/clusters.json`. CRUD via CLI and REST API
+- **Multi-cluster** — clusters registered via JSON store at `~/.pgmanager/clusters.json`. CRUD via CLI and REST API
 - **Hybrid agent model** — agentless by default (libpq), optional stateless agent for filesystem operations
 - **Unified `Message` channel** — WAL changes and sentinels flow through the same `chan Message`
 - **pgoutput plugin** — built-in since PostgreSQL 10, binary protocol, publication-aware. No `wal2json` dependency

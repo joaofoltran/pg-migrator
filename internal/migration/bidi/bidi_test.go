@@ -8,12 +8,12 @@ import (
 	"github.com/jackc/pglogrepl"
 	"github.com/rs/zerolog"
 
-	"github.com/jfoltran/migrator/internal/migration/stream"
+	"github.com/jfoltran/pgmanager/internal/migration/stream"
 )
 
 func TestFilter_DropsMatchingOrigin(t *testing.T) {
 	logger := zerolog.Nop()
-	f := NewFilter("migrator-a", logger)
+	f := NewFilter("pgmanager-a", logger)
 
 	in := make(chan stream.Message, 10)
 	ctx, cancel := context.WithCancel(context.Background())
@@ -26,7 +26,7 @@ func TestFilter_DropsMatchingOrigin(t *testing.T) {
 		Op:      stream.OpInsert,
 		MsgLSN:  pglogrepl.LSN(100),
 		MsgTime: time.Now(),
-		Origin:  "migrator-a",
+		Origin:  "pgmanager-a",
 	}
 
 	// Send a message with different origin (should pass through).
@@ -34,7 +34,7 @@ func TestFilter_DropsMatchingOrigin(t *testing.T) {
 		Op:      stream.OpInsert,
 		MsgLSN:  pglogrepl.LSN(200),
 		MsgTime: time.Now(),
-		Origin:  "migrator-b",
+		Origin:  "pgmanager-b",
 	}
 	in <- msg
 

@@ -1,7 +1,7 @@
-BINARY := migrator
-PKG := ./cmd/migrator
+BINARY := pgmanager
+PKG := ./cmd/pgmanager
 
-.PHONY: build test test-integration test-benchmark test-stop setup-bench setup-bench-down lint clean web-install web-build web-dev build-full docker install
+.PHONY: build test test-integration test-benchmark test-stop setup-bench setup-bench-down lint clean web-install web-build web-dev build-full docker install dev dev-db
 
 build:
 	go build -o $(BINARY) $(PKG)
@@ -70,8 +70,17 @@ build-full: web-build build
 
 # Docker
 docker:
-	docker build -t migrator .
+	docker build -t pgmanager .
 
 # Install to /usr/local/bin
 install: build-full
 	cp $(BINARY) /usr/local/bin/
+
+# Dev: start only the DB container, build natively, and run
+dev-db:
+	@$(COMPOSE_CMD) up db -d --wait
+
+dev: dev-db build
+	PGMANAGER_DB_URL="postgres://pgmanager:pgmanager@localhost:5432/pgmanager?sslmode=disable" \
+	PGMANAGER_LOG_LEVEL=debug \
+		./$(BINARY)

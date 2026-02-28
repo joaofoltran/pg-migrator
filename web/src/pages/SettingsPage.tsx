@@ -24,7 +24,7 @@ export function SettingsPage() {
           </div>
           <div className="flex items-center justify-between py-2 border-b" style={{ borderColor: "var(--color-border)" }}>
             <span style={{ color: "var(--color-text-secondary)" }}>Data directory</span>
-            <span className="font-mono" style={{ color: "var(--color-text)" }}>~/.migrator</span>
+            <span className="font-mono" style={{ color: "var(--color-text)" }}>~/.pgmanager</span>
           </div>
           <div className="flex items-center justify-between py-2">
             <span style={{ color: "var(--color-text-secondary)" }}>Version</span>

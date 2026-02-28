@@ -13,12 +13,12 @@ import (
 )
 
 const (
-	DirName  = ".migrator"
-	PIDFile  = "migrator.pid"
-	LogFile  = "migrator.log"
+	DirName  = ".pgmanager"
+	PIDFile  = "pgmanager.pid"
+	LogFile  = "pgmanager.log"
 )
 
-// DataDir returns ~/.migrator, creating it if needed.
+// DataDir returns ~/.pgmanager, creating it if needed.
 func DataDir() (string, error) {
 	home, err := os.UserHomeDir()
 	if err != nil {
@@ -105,7 +105,7 @@ func IsRunning() (int, bool) {
 	return pid, true
 }
 
-// Background re-execs the current binary with _MIGRATOR_DAEMON=1 set,
+// Background re-execs the current binary with _PGMANAGER_DAEMON=1 set,
 // detaching stdin/stdout/stderr so the parent can exit.
 func Background(args []string) (int, error) {
 	exe, err := os.Executable()
@@ -123,7 +123,7 @@ func Background(args []string) (int, error) {
 	}
 
 	cmd := exec.Command(exe, args...)
-	cmd.Env = append(os.Environ(), "_MIGRATOR_DAEMON=1")
+	cmd.Env = append(os.Environ(), "_PGMANAGER_DAEMON=1")
 	cmd.Stdin = nil
 	cmd.Stdout = logFile
 	cmd.Stderr = logFile
@@ -140,7 +140,7 @@ func Background(args []string) (int, error) {
 
 // IsDaemonProcess returns true if running as the backgrounded daemon child.
 func IsDaemonProcess() bool {
-	return os.Getenv("_MIGRATOR_DAEMON") == "1"
+	return os.Getenv("_PGMANAGER_DAEMON") == "1"
 }
 
 // Stop sends SIGTERM to the daemon and waits for it to exit.

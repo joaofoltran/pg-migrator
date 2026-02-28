@@ -8,7 +8,7 @@ import (
 	"github.com/jackc/pglogrepl"
 	"github.com/rs/zerolog"
 
-	"github.com/jfoltran/migrator/internal/migration/stream"
+	"github.com/jfoltran/pgmanager/internal/migration/stream"
 )
 
 func TestSentinelMessage_Interface(t *testing.T) {

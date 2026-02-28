@@ -1,0 +1,9 @@
+.git
+.claude
+.crush
+web/node_modules
+web/dist
+internal/server/dist
+*.md
+*.log
+pgmanager

@@ -102,7 +102,7 @@ export function Sidebar() {
               className="text-sm font-semibold tracking-tight"
               style={{ color: "var(--color-text)" }}
             >
-              migrator
+              pgmanager
             </h1>
             <p
               className="text-[10px]"
@@ -165,7 +165,7 @@ export function Sidebar() {
             className="text-[10px]"
             style={{ color: "var(--color-text-muted)" }}
           >
-            Daemon connected
+            pgmanager
           </span>
           <span className="ml-auto w-1.5 h-1.5 rounded-full bg-emerald-500" />
         </div>

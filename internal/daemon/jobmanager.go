@@ -9,9 +9,9 @@ import (
 	"github.com/jackc/pglogrepl"
 	"github.com/rs/zerolog"
 
-	"github.com/jfoltran/migrator/internal/config"
-	"github.com/jfoltran/migrator/internal/metrics"
-	"github.com/jfoltran/migrator/internal/migration/pipeline"
+	"github.com/jfoltran/pgmanager/internal/config"
+	"github.com/jfoltran/pgmanager/internal/metrics"
+	"github.com/jfoltran/pgmanager/internal/migration/pipeline"
 )
 
 // JobManager manages the currently running pipeline job.

@@ -8,7 +8,7 @@ import (
 	"net/http"
 	"time"
 
-	"github.com/jfoltran/migrator/internal/metrics"
+	"github.com/jfoltran/pgmanager/internal/metrics"
 )
 
 // Client talks to the daemon's HTTP API.

@@ -79,7 +79,7 @@ type Pipeline struct {
     decoder     *stream.Decoder       // WAL stream consumer
     applier     *replay.Applier       // DML writer to destination
     copier      *snapshot.Copier      // Parallel COPY engine
-    schemaMgr   *schema.Migrator      // DDL dump/apply/compare
+    schemaMgr   *schema.Manager      // DDL dump/apply/compare
     coordinator *sentinel.Coordinator // Switchover sentinel manager
     bidiFilter  *bidi.Filter          // Loop detection (optional)
 
@@ -121,13 +121,13 @@ Creates all pipeline components using the established connections:
 - `stream.Decoder` — Configured with slot name and publication from config
 - `replay.Applier` — Uses destination pool
 - `snapshot.Copier` — Uses both pools with configured worker count
-- `schema.Migrator` — Uses both pools
+- `schema.Manager` — Uses both pools
 - `sentinel.Coordinator` — Writes sentinels to the messages channel
 - `bidi.Filter` — Only created if `OriginID` is configured
 
 ### `startPersister()`
 
-Initializes the `StatePersister` to write `~/.migrator/state.json` every 2 seconds. Logs a warning and continues if state persistence fails (e.g., filesystem permission issues).
+Initializes the `StatePersister` to write `~/.pgmanager/state.json` every 2 seconds. Logs a warning and continues if state persistence fails (e.g., filesystem permission issues).
 
 ## Run Methods
 

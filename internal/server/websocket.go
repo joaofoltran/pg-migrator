@@ -10,7 +10,7 @@ import (
 	"github.com/rs/zerolog"
 	"github.com/coder/websocket"
 
-	"github.com/jfoltran/migrator/internal/metrics"
+	"github.com/jfoltran/pgmanager/internal/metrics"
 )
 
 // Hub manages WebSocket clients and broadcasts Snapshot updates.

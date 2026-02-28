@@ -5,7 +5,7 @@
 
 ## Overview
 
-The Applier is the write-side of the migrator pipeline. It consumes `Message` objects from a channel and applies the corresponding DML operations (INSERT, UPDATE, DELETE) to the destination PostgreSQL database. It maintains transaction boundaries, caches relation metadata, and provides an LSN confirmation callback that drives the replication slot advancement.
+The Applier is the write-side of the pgmanager pipeline. It consumes `Message` objects from a channel and applies the corresponding DML operations (INSERT, UPDATE, DELETE) to the destination PostgreSQL database. It maintains transaction boundaries, caches relation metadata, and provides an LSN confirmation callback that drives the replication slot advancement.
 
 ## Architecture
 

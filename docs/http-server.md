@@ -5,7 +5,7 @@
 
 ## Overview
 
-The HTTP server provides a unified interface for monitoring and managing migrator. It serves four concerns from a single port:
+The HTTP server provides a unified interface for monitoring and managing pgmanager. It serves four concerns from a single port:
 
 1. **REST API** — JSON endpoints for migration status, per-table progress, configuration, logs, and cluster management
 2. **WebSocket** — Real-time push of `Snapshot` updates to connected clients at 500ms intervals

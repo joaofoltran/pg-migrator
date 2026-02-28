@@ -2,7 +2,7 @@ services:
   source-pg:
     image: postgres:18
     ports:
-      - "5432:5432"
+      - "55432:5432"
     environment:
       POSTGRES_DB: source
       POSTGRES_PASSWORD: source
@@ -24,11 +24,19 @@ services:
   dest-pg:
     image: postgres:18
     ports:
-      - "5433:5432"
+      - "55433:5432"
     environment:
       POSTGRES_DB: dest
       POSTGRES_PASSWORD: dest
       PGDATA: /var/lib/postgresql/data
+    command:
+      - postgres
+      - -c
+      - wal_level=logical
+      - -c
+      - max_replication_slots=10
+      - -c
+      - max_wal_senders=10
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U postgres"]
       interval: 2s

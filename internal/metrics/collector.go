@@ -8,7 +8,7 @@ import (
 	"github.com/jackc/pglogrepl"
 	"github.com/rs/zerolog"
 
-	"github.com/jfoltran/migrator/pkg/lsn"
+	"github.com/jfoltran/pgmanager/pkg/lsn"
 )
 
 // TableStatus represents the current state of a table in the migration.
@@ -169,6 +169,9 @@ func (c *Collector) UpdateTableProgress(schema, name string, rowsCopied, bytesCo
 		tp.BytesCopied = bytesCopied
 		if tp.RowsTotal > 0 {
 			tp.Percent = float64(rowsCopied) / float64(tp.RowsTotal) * 100
+			if tp.Percent > 99.9 {
+				tp.Percent = 99.9
+			}
 		}
 		if !tp.StartedAt.IsZero() {
 			tp.ElapsedSec = time.Since(tp.StartedAt).Seconds()
@@ -184,6 +187,9 @@ func (c *Collector) TableDone(schema, name string, rowsCopied int64) {
 	if tp, ok := c.tables[key]; ok {
 		tp.Status = TableCopied
 		tp.RowsCopied = rowsCopied
+		if tp.RowsTotal == 0 {
+			tp.RowsTotal = rowsCopied
+		}
 		tp.Percent = 100
 		if !tp.StartedAt.IsZero() {
 			tp.ElapsedSec = time.Since(tp.StartedAt).Seconds()

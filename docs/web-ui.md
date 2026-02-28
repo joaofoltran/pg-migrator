@@ -8,7 +8,7 @@
 
 The web UI is a multi-page React application with sidebar navigation for managing PostgreSQL clusters and monitoring migrations. It connects to the daemon's HTTP API via WebSocket for real-time updates and provides cluster registration, migration monitoring, and module switching.
 
-The built frontend is embedded into the Go binary via `go:embed`, so the `migrator` binary is fully self-contained. The Go server includes a SPA fallback handler that serves `index.html` for all client-side routes.
+The built frontend is embedded into the Go binary via `go:embed`, so the `pgmanager` binary is fully self-contained. The Go server includes a SPA fallback handler that serves `index.html` for all client-side routes.
 
 ## Architecture
 

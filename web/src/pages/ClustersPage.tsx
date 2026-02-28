@@ -1,29 +1,34 @@
 import { useEffect, useState } from "react";
+import { useNavigate } from "react-router-dom";
 import {
   Database,
   Plus,
   Trash2,
-  Server,
   CheckCircle2,
   XCircle,
   Loader2,
   ChevronRight,
+  WifiOff,
+  RefreshCw,
 } from "lucide-react";
 import type { Cluster, ClusterNode } from "../types/cluster";
 import { fetchClusters, addCluster, removeCluster } from "../api/client";
 
 export function ClustersPage() {
+  const navigate = useNavigate();
   const [clusters, setClusters] = useState<Cluster[]>([]);
   const [loading, setLoading] = useState(true);
   const [showAdd, setShowAdd] = useState(false);
-  const [expanded, setExpanded] = useState<string | null>(null);
+  const [apiDown, setApiDown] = useState(false);
 
   async function load() {
     try {
       const data = await fetchClusters();
       setClusters(data || []);
+      setApiDown(false);
     } catch {
       setClusters([]);
+      setApiDown(true);
     } finally {
       setLoading(false);
     }
@@ -33,12 +38,13 @@ export function ClustersPage() {
     load();
   }, []);
 
-  async function handleRemove(id: string) {
+  async function handleRemove(e: React.MouseEvent, id: string) {
+    e.stopPropagation();
     try {
       await removeCluster(id);
       setClusters((prev) => prev.filter((c) => c.id !== id));
-    } catch (e: unknown) {
-      alert(e instanceof Error ? e.message : "Failed to remove cluster");
+    } catch (err: unknown) {
+      alert(err instanceof Error ? err.message : "Failed to remove cluster");
     }
   }
 
@@ -80,6 +86,24 @@ export function ClustersPage() {
         </button>
       </div>
 
+      {apiDown && (
+        <div className="rounded-lg border p-8 text-center"
+          style={{ backgroundColor: "var(--color-surface)", borderColor: "var(--color-border)" }}>
+          <WifiOff className="w-8 h-8 mx-auto mb-3" style={{ color: "var(--color-text-muted)" }} />
+          <p className="font-medium" style={{ color: "var(--color-text)" }}>Unable to reach API</p>
+          <p className="text-sm mt-1" style={{ color: "var(--color-text-muted)" }}>
+            Check that the pgmanager process is running.
+          </p>
+          <button
+            onClick={() => { setLoading(true); setApiDown(false); load(); }}
+            className="mt-4 flex items-center gap-2 mx-auto px-4 py-2 rounded-lg text-sm transition-colors hover:bg-white/5"
+            style={{ color: "var(--color-accent)" }}
+          >
+            <RefreshCw className="w-4 h-4" /> Retry
+          </button>
+        </div>
+      )}
+
       {showAdd && (
         <AddClusterForm
           onAdded={(c) => {
@@ -120,22 +144,14 @@ export function ClustersPage() {
           {clusters.map((c) => (
             <div
               key={c.id}
-              className="rounded-lg border"
+              className="rounded-lg border cursor-pointer transition-colors hover:border-[var(--color-accent)]/30"
               style={{
                 backgroundColor: "var(--color-surface)",
                 borderColor: "var(--color-border)",
               }}
+              onClick={() => navigate(`/clusters/${c.id}`)}
             >
-              <div
-                className="flex items-center gap-3 p-4 cursor-pointer"
-                onClick={() =>
-                  setExpanded(expanded === c.id ? null : c.id)
-                }
-              >
-                <ChevronRight
-                  className={`w-4 h-4 transition-transform ${expanded === c.id ? "rotate-90" : ""}`}
-                  style={{ color: "var(--color-text-muted)" }}
-                />
+              <div className="flex items-center gap-3 p-4">
                 <div
                   className="w-8 h-8 rounded-lg flex items-center justify-center"
                   style={{ backgroundColor: "var(--color-accent)" }}
@@ -155,6 +171,9 @@ export function ClustersPage() {
                   >
                     {c.id} &middot; {c.nodes.length} node
                     {c.nodes.length !== 1 ? "s" : ""}
+                    {c.nodes[0] && (
+                      <> &middot; {c.nodes[0].host}:{c.nodes[0].port}</>
+                    )}
                   </div>
                 </div>
                 {c.tags && c.tags.length > 0 && (
@@ -174,72 +193,19 @@ export function ClustersPage() {
                   </div>
                 )}
                 <button
-                  onClick={(e) => {
-                    e.stopPropagation();
-                    handleRemove(c.id);
-                  }}
+                  onClick={(e) => handleRemove(e, c.id)}
                   className="p-1.5 rounded-md hover:bg-red-500/10 transition-colors"
                 >
                   <Trash2 className="w-4 h-4 text-red-400" />
                 </button>
+                <ChevronRight
+                  className="w-4 h-4"
+                  style={{ color: "var(--color-text-muted)" }}
+                />
               </div>
-
-              {expanded === c.id && (
-                <div
-                  className="border-t px-4 py-3"
-                  style={{ borderColor: "var(--color-border)" }}
-                >
-                  <div className="grid gap-2">
-                    {c.nodes.map((n) => (
-                      <NodeRow key={n.id} node={n} />
-                    ))}
-                  </div>
-                </div>
-              )}
             </div>
           ))}
         </div>
-      )}
-    </div>
-  );
-}
-
-function NodeRow({ node }: { node: ClusterNode }) {
-  const roleColors: Record<string, string> = {
-    primary: "#22c55e",
-    replica: "#3b82f6",
-    standby: "#eab308",
-  };
-  const color = roleColors[node.role] || "var(--color-text-muted)";
-
-  return (
-    <div
-      className="flex items-center gap-3 px-3 py-2 rounded-md"
-      style={{ backgroundColor: "var(--color-bg)" }}
-    >
-      <Server className="w-4 h-4" style={{ color }} />
-      <span
-        className="text-xs font-mono px-1.5 py-0.5 rounded"
-        style={{ backgroundColor: color + "20", color }}
-      >
-        {node.role}
-      </span>
-      <span
-        className="text-sm font-mono flex-1"
-        style={{ color: "var(--color-text)" }}
-      >
-        {node.host}:{node.port}
-      </span>
-      {node.agent_url && (
-        <span
-          className="text-[10px] px-2 py-0.5 rounded-full"
-          style={{
-            backgroundColor: "var(--color-accent)" + "20",
-            color: "var(--color-accent)",
-          }}
-        >
-          agent
-        </span>
       )}
     </div>
   );
@@ -257,6 +223,9 @@ function AddClusterForm({
   const [host, setHost] = useState("");
   const [port, setPort] = useState("5432");
   const [role, setRole] = useState<string>("primary");
+  const [user, setUser] = useState("postgres");
+  const [password, setPassword] = useState("");
+  const [dbname, setDbname] = useState("postgres");
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -275,12 +244,15 @@ function AddClusterForm({
             host,
             port: parseInt(port) || 5432,
             role: role as ClusterNode["role"],
+            user: user || undefined,
+            password: password || undefined,
+            dbname: dbname || undefined,
           },
         ],
       });
       onAdded(c);
-    } catch (e: unknown) {
-      setError(e instanceof Error ? e.message : "Failed to add cluster");
+    } catch (err: unknown) {
+      setError(err instanceof Error ? err.message : "Failed to add cluster");
     } finally {
       setSubmitting(false);
     }
@@ -410,6 +382,66 @@ function AddClusterForm({
               <option value="replica">Replica</option>
               <option value="standby">Standby</option>
             </select>
+          </div>
+        </div>
+      </div>
+
+      <div
+        className="border-t pt-3"
+        style={{ borderColor: "var(--color-border)" }}
+      >
+        <p
+          className="text-xs mb-2"
+          style={{ color: "var(--color-text-muted)" }}
+        >
+          Connection credentials
+        </p>
+        <div className="grid grid-cols-3 gap-3">
+          <div>
+            <label
+              className="block text-xs mb-1"
+              style={{ color: "var(--color-text-secondary)" }}
+            >
+              User
+            </label>
+            <input
+              className="w-full rounded-md border px-3 py-2 text-sm"
+              style={inputStyle}
+              placeholder="postgres"
+              value={user}
+              onChange={(e) => setUser(e.target.value)}
+            />
+          </div>
+          <div>
+            <label
+              className="block text-xs mb-1"
+              style={{ color: "var(--color-text-secondary)" }}
+            >
+              Password
+            </label>
+            <input
+              type="password"
+              className="w-full rounded-md border px-3 py-2 text-sm"
+              style={inputStyle}
+              placeholder="Optional"
+              value={password}
+              onChange={(e) => setPassword(e.target.value)}
+            />
+          </div>
+          <div>
+            <label
+              className="block text-xs mb-1"
+              style={{ color: "var(--color-text-secondary)" }}
+            >
+              Database
+            </label>
+            <input
+              className="w-full rounded-md border px-3 py-2 text-sm"
+              style={inputStyle}
+              placeholder="postgres"
+              value={dbname}
+              onChange={(e) => setDbname(e.target.value)}
+            />
           </div>
         </div>
       </div>

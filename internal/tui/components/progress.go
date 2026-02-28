@@ -6,7 +6,7 @@ import (
 
 	"github.com/charmbracelet/lipgloss"
 
-	"github.com/jfoltran/migrator/internal/metrics"
+	"github.com/jfoltran/pgmanager/internal/metrics"
 )
 
 var (

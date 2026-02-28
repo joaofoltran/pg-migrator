@@ -1,21 +1,51 @@
+//go:build integration
+
 package cluster
 
 import (
+	"context"
 	"os"
-	"path/filepath"
 	"testing"
+
+	"github.com/jackc/pgx/v5/pgxpool"
 )
 
 func setupTestStore(t *testing.T) *Store {
 	t.Helper()
-	dir := t.TempDir()
-	path := filepath.Join(dir, "clusters.json")
-	s := &Store{path: path}
-	return s
+	dbURL := os.Getenv("PGMANAGER_TEST_DB_URL")
+	if dbURL == "" {
+		t.Skip("PGMANAGER_TEST_DB_URL not set")
+	}
+
+	ctx := context.Background()
+	pool, err := pgxpool.New(ctx, dbURL)
+	if err != nil {
+		t.Fatalf("connect: %v", err)
+	}
+	t.Cleanup(func() { pool.Close() })
+
+	pool.Exec(ctx, "DROP TABLE IF EXISTS nodes")
+	pool.Exec(ctx, "DROP TABLE IF EXISTS clusters")
+	pool.Exec(ctx, `CREATE TABLE IF NOT EXISTS clusters (
+		id TEXT PRIMARY KEY, name TEXT NOT NULL,
+		tags TEXT[] NOT NULL DEFAULT '{}',
+		created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+		updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
+	)`)
+	pool.Exec(ctx, `CREATE TABLE IF NOT EXISTS nodes (
+		id TEXT NOT NULL, cluster_id TEXT NOT NULL REFERENCES clusters(id) ON DELETE CASCADE,
+		name TEXT NOT NULL DEFAULT '', host TEXT NOT NULL, port INTEGER NOT NULL DEFAULT 5432,
+		role TEXT NOT NULL DEFAULT 'primary', username TEXT NOT NULL DEFAULT 'postgres',
+		password TEXT NOT NULL DEFAULT '', dbname TEXT NOT NULL DEFAULT 'postgres',
+		agent_url TEXT NOT NULL DEFAULT '', PRIMARY KEY (cluster_id, id)
+	)`)
+
+	return NewStore(pool)
 }
 
 func TestStoreAddAndGet(t *testing.T) {
 	s := setupTestStore(t)
+	ctx := context.Background()
 
 	c := Cluster{
 		ID:   "prod",
@@ -25,11 +55,14 @@ func TestStoreAddAndGet(t *testing.T) {
 		},
 	}
 
-	if err := s.Add(c); err != nil {
+	if err := s.Add(ctx, c); err != nil {
 		t.Fatalf("Add: %v", err)
 	}
 
-	got, ok := s.Get("prod")
+	got, ok, err := s.Get(ctx, "prod")
+	if err != nil {
+		t.Fatalf("Get: %v", err)
+	}
 	if !ok {
 		t.Fatal("Get: cluster not found")
 	}
@@ -49,56 +82,67 @@ func TestStoreAddAndGet(t *testing.T) {
 
 func TestStoreDuplicateAdd(t *testing.T) {
 	s := setupTestStore(t)
+	ctx := context.Background()
 
 	c := Cluster{
 		ID:    "prod",
 		Name:  "Production",
 		Nodes: []Node{{ID: "n1", Host: "h1", Port: 5432}},
 	}
-	if err := s.Add(c); err != nil {
+	if err := s.Add(ctx, c); err != nil {
 		t.Fatalf("Add: %v", err)
 	}
-	if err := s.Add(c); err == nil {
+	if err := s.Add(ctx, c); err == nil {
 		t.Fatal("expected error on duplicate add")
 	}
 }
 
 func TestStoreList(t *testing.T) {
 	s := setupTestStore(t)
+	ctx := context.Background()
 
-	if list := s.List(); len(list) != 0 {
+	list, err := s.List(ctx)
+	if err != nil {
+		t.Fatalf("List: %v", err)
+	}
+	if len(list) != 0 {
 		t.Fatalf("List: expected empty, got %d", len(list))
 	}
 
 	for _, id := range []string{"a", "b", "c"} {
-		s.Add(Cluster{
+		s.Add(ctx, Cluster{
 			ID:    id,
 			Name:  id,
 			Nodes: []Node{{ID: "n", Host: "h", Port: 5432}},
 		})
 	}
 
-	if list := s.List(); len(list) != 3 {
+	list, err = s.List(ctx)
+	if err != nil {
+		t.Fatalf("List: %v", err)
+	}
+	if len(list) != 3 {
 		t.Fatalf("List: expected 3, got %d", len(list))
 	}
 }
 
 func TestStoreUpdate(t *testing.T) {
 	s := setupTestStore(t)
+	ctx := context.Background()
 
 	c := Cluster{
 		ID:    "prod",
 		Name:  "Production",
 		Nodes: []Node{{ID: "n1", Host: "h1", Port: 5432}},
 	}
-	s.Add(c)
+	s.Add(ctx, c)
 
 	c.Name = "Production (updated)"
-	if err := s.Update(c); err != nil {
+	if err := s.Update(ctx, c); err != nil {
 		t.Fatalf("Update: %v", err)
 	}
 
-	got, _ := s.Get("prod")
+	got, _, _ := s.Get(ctx, "prod")
 	if got.Name != "Production (updated)" {
 		t.Errorf("Name = %q, want %q", got.Name, "Production (updated)")
 	}
@@ -109,7 +153,8 @@ func TestStoreUpdate(t *testing.T) {
 
 func TestStoreUpdateNotFound(t *testing.T) {
 	s := setupTestStore(t)
-	err := s.Update(Cluster{ID: "nope"})
+	ctx := context.Background()
+	err := s.Update(ctx, Cluster{ID: "nope"})
 	if err == nil {
 		t.Fatal("expected error on update of nonexistent cluster")
 	}
@@ -117,67 +162,57 @@ func TestStoreUpdateNotFound(t *testing.T) {
 
 func TestStoreRemove(t *testing.T) {
 	s := setupTestStore(t)
+	ctx := context.Background()
 
-	s.Add(Cluster{
+	s.Add(ctx, Cluster{
 		ID:    "prod",
 		Name:  "Production",
 		Nodes: []Node{{ID: "n1", Host: "h1", Port: 5432}},
 	})
 
-	if err := s.Remove("prod"); err != nil {
+	if err := s.Remove(ctx, "prod"); err != nil {
 		t.Fatalf("Remove: %v", err)
 	}
 
-	if _, ok := s.Get("prod"); ok {
+	if _, ok, _ := s.Get(ctx, "prod"); ok {
 		t.Fatal("cluster should be removed")
 	}
 }
 
 func TestStoreRemoveNotFound(t *testing.T) {
 	s := setupTestStore(t)
-	if err := s.Remove("nope"); err == nil {
+	ctx := context.Background()
+	if err := s.Remove(ctx, "nope"); err == nil {
 		t.Fatal("expected error on remove of nonexistent cluster")
 	}
 }
 
 func TestStoreAddNode(t *testing.T) {
 	s := setupTestStore(t)
+	ctx := context.Background()
 
-	s.Add(Cluster{
+	s.Add(ctx, Cluster{
 		ID:    "prod",
 		Name:  "Production",
 		Nodes: []Node{{ID: "primary", Host: "h1", Port: 5432, Role: RolePrimary}},
 	})
 
 	n := Node{ID: "replica1", Name: "pg-replica1", Host: "10.0.0.2", Port: 5432, Role: RoleReplica}
-	if err := s.AddNode("prod", n); err != nil {
+	if err := s.AddNode(ctx, "prod", n); err != nil {
 		t.Fatalf("AddNode: %v", err)
 	}
 
-	c, _ := s.Get("prod")
+	c, _, _ := s.Get(ctx, "prod")
 	if len(c.Nodes) != 2 {
 		t.Fatalf("Nodes count = %d, want 2", len(c.Nodes))
 	}
 }
 
-func TestStoreAddNodeDuplicate(t *testing.T) {
-	s := setupTestStore(t)
-
-	s.Add(Cluster{
-		ID:    "prod",
-		Name:  "Production",
-		Nodes: []Node{{ID: "primary", Host: "h1", Port: 5432}},
-	})
-
-	if err := s.AddNode("prod", Node{ID: "primary", Host: "h2", Port: 5432}); err == nil {
-		t.Fatal("expected error on duplicate node add")
-	}
-}
-
 func TestStoreRemoveNode(t *testing.T) {
 	s := setupTestStore(t)
+	ctx := context.Background()
 
-	s.Add(Cluster{
+	s.Add(ctx, Cluster{
 		ID:   "prod",
 		Name: "Production",
 		Nodes: []Node{
@@ -186,59 +221,13 @@ func TestStoreRemoveNode(t *testing.T) {
 		},
 	})
 
-	if err := s.RemoveNode("prod", "replica"); err != nil {
+	if err := s.RemoveNode(ctx, "prod", "replica"); err != nil {
 		t.Fatalf("RemoveNode: %v", err)
 	}
 
-	c, _ := s.Get("prod")
+	c, _, _ := s.Get(ctx, "prod")
 	if len(c.Nodes) != 1 {
 		t.Fatalf("Nodes count = %d, want 1", len(c.Nodes))
-	}
-}
-
-func TestStorePersistence(t *testing.T) {
-	dir := t.TempDir()
-	path := filepath.Join(dir, "clusters.json")
-
-	s1 := &Store{path: path}
-	s1.Add(Cluster{
-		ID:    "prod",
-		Name:  "Production",
-		Nodes: []Node{{ID: "n1", Host: "h1", Port: 5432}},
-	})
-
-	s2 := &Store{path: path}
-	if err := s2.load(); err != nil {
-		t.Fatalf("load: %v", err)
-	}
-
-	c, ok := s2.Get("prod")
-	if !ok {
-		t.Fatal("cluster not found after reload")
-	}
-	if c.Name != "Production" {
-		t.Errorf("Name = %q, want %q", c.Name, "Production")
-	}
-}
-
-func TestStoreFilePermissions(t *testing.T) {
-	dir := t.TempDir()
-	path := filepath.Join(dir, "clusters.json")
-
-	s := &Store{path: path}
-	s.Add(Cluster{
-		ID:    "prod",
-		Name:  "Production",
-		Nodes: []Node{{ID: "n1", Host: "h1", Port: 5432}},
-	})
-
-	info, err := os.Stat(path)
-	if err != nil {
-		t.Fatalf("Stat: %v", err)
-	}
-	perm := info.Mode().Perm()
-	if perm != 0o600 {
-		t.Errorf("file permissions = %o, want 0600", perm)
 	}
 }
 
